@@ -1,129 +1,181 @@
-from supabase import create_client, Client
-from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from datetime import datetime, timedelta
+from decimal import Decimal
+from supabase_client import supabase
 import requests
-import os
-from dotenv import load_dotenv
 
-# --- Cargar variables de entorno ---
-load_dotenv()
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(url, key)
-print("Conectado a:", url)
-
-# --- Limpiar tabla de tasas ---
-print("🧹 Eliminando TODAS las tasas anteriores...")
-supabase.table("tasas").delete().neq("id", 0).execute()
-
-# --- EXTRAER USDT DESDE KANDUI ---
-email = "gerenciavip22@gmail.com"
-password = "Gerencia12!"
-
-options = webdriver.ChromeOptions()
-options.add_argument("--headless")
-options.add_argument("--disable-gpu")
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-print("\U0001F310 Abriendo Kandui...")
-driver.get("https://www.kandui.cl/ingreso")
-
-try:
-    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.NAME, "email")))
-    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.NAME, "password")))
-
-    driver.find_element(By.NAME, "email").send_keys(email)
-    driver.find_element(By.NAME, "password").send_keys(password)
-    driver.find_element(By.NAME, "password").send_keys(Keys.RETURN)
-
-    WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.XPATH, '//p[contains(text(), "USDT")]/following-sibling::p'))
-    )
-
-    usdt_valor = driver.find_element(By.XPATH, '//p[contains(text(), "USDT")]/following-sibling::p')
-    valor_texto = usdt_valor.text.strip().replace("$", "").replace(",", ".")
-    valor_kandui = float(valor_texto)
-    print(f"\U0001F4C8 Valor USDT Kandui: {valor_kandui}")
-
-    supabase.table("tasas").insert({
-        "nombre_tasa": "USDT_KANDUI",
-        "valor": round(valor_kandui, 4),
-        "fecha": datetime.now().isoformat()
-    }).execute()
-
-except Exception as e:
-    print("❌ Error extrayendo USDT Kandui:", e)
-    driver.quit()
-    exit()
-
-finally:
-    driver.quit()
-
-# --- FUNCIONES PARA BINANCE ---
-def get_p2p_data(asset, fiat, trade_type, rows=20, pay_types=None, countries=None):
-    url = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
-    headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+# === Obtener tercera oferta de Binance ===
+def get_third_offer(asset, fiat, trade_type, amount=None, pay_types=None):
+    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    headers = {'Content-Type': 'application/json'}
     payload = {
-        "asset": asset, "fiat": fiat, "merchantCheck": False,
-        "page": 1, "rows": rows, "tradeType": trade_type,
+        "asset": asset,
+        "fiat": fiat,
+        "merchantCheck": False,
+        "page": 1,
+        "rows": 10,
+        "tradeType": trade_type.upper(),
         "payTypes": pay_types if pay_types else [],
-        "countries": countries if countries else []
+        "countries": []
     }
-    response = requests.post(url, headers=headers, json=payload)
-    data = response.json()
-    if response.status_code == 200 and data['code'] == '000000':
-        return data['data']
-    else:
-        print(f"Error al obtener datos: {data['message']}")
+    if amount:
+        payload["transAmount"] = str(amount)
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        if data['code'] == '000000' and len(data['data']) >= 3:
+            return float(data['data'][2]['adv']['price'])
+        else:
+            print(f"⚠️ Menos de 3 ofertas para {fiat} {trade_type} (amount: {amount})")
+            return None
+    except Exception as e:
+        print(f"❌ Error al obtener tercera oferta: {e}")
         return None
 
-# --- DEFINIR CONFIGURACIÓN DE CADA PAÍS ---
-paises_config = {
-    "Venezuela": {"fiat": "VES", "porcentaje": 0.065},
-    "Colombia": {"fiat": "COP", "porcentaje": 0.07},
-    "Argentina": {"fiat": "ARS", "porcentaje": 0.065},
-    "Perú": {"fiat": "PEN", "porcentaje": 0.12},
-    "Brasil": {"fiat": "BRL", "porcentaje": 0.10},
-    "Euro": {"fiat": "EUR", "pay_type": "Bizum", "porcentaje": 0.10},
-    "USA": {"fiat": "USD", "pay_type": "Zelle", "porcentaje": 0.10},
-    "México": {"fiat": "MXN", "porcentaje": 0.10},
-    "Panamá": {"fiat": "PAB", "porcentaje": 0.07},
-    "Ecuador": {"fiat": "USD", "country": "EC", "porcentaje": 0.10},
+# === Guardar tasa en Supabase ===
+def guardar_tasa(nombre, valor, decimales=4):
+    try:
+        fecha_venezuela = datetime.utcnow() - timedelta(hours=4)
+        response = supabase.table("tasas").insert({
+            "nombre_tasa": nombre,
+            "valor": round(valor, decimales),
+            "fecha_actual": fecha_venezuela.isoformat()
+        }).execute()
+        if not response.data:
+            print(f"❌ No se guardó {nombre}. Respuesta vacía.")
+        else:
+            print(f"✅ Tasa guardada: {nombre} = {round(valor, decimales)}")
+    except Exception as e:
+        print(f"❌ Excepción al guardar {nombre}: {e}")
+
+# === Calcular promedio sin redondear aún ===
+def promedio_tasa(nombre):
+    response = supabase.table("tasas").select("valor").eq("nombre_tasa", nombre).order("fecha_actual", desc=True).limit(2).execute()
+    valores = [Decimal(row["valor"]) for row in response.data]
+    if len(valores) == 2:
+        return float((valores[0] + valores[1]) / 2)
+    return None
+
+# === Márgenes personalizados ===
+margenes_personalizados = {
+    "Chile - Venezuela": {"publico": 0.065, "mayorista": 0.035},
+    "Chile - Colombia": {"publico": 0.07, "mayorista": 0.04},
+    "Chile - Argentina": {"publico": 0.065, "mayorista": 0.035},
+    "Chile - Perú": {"publico": 0.12, "mayorista": 0.06},
+    "Chile - Brasil": {"publico": 0.10, "mayorista": 0.05},
+    "Chile - Europa": {"publico": 0.10, "mayorista": 0.05},
+    "Chile - USA": {"publico": 0.07, "mayorista": 0.05},
+    "Chile - México": {"publico": 0.10, "mayorista": 0.05},
+    "Chile - Panamá": {"publico": 0.07, "mayorista": 0.04},
+    "Chile - Ecuador": {"publico": 0.10, "mayorista": 0.05},
+    "Colombia - Venezuela": {"publico": 0.065, "mayorista": 0.035},
+    "Argentina - Venezuela": {"publico": 0.065, "mayorista": 0.035},
+    "México - Venezuela": {"publico": 0.07, "mayorista": 0.04},
+    "USA - Venezuela": {"publico": 0.065, "mayorista": 0.035},
+    "Perú - Venezuela": {"publico": 0.12, "mayorista": 0.06},
+    "Brasil - Venezuela": {"publico": 0.10, "mayorista": 0.05},
+    "Europa - Venezuela": {"publico": 0.10, "mayorista": 0.05},
+    "Panamá - Venezuela": {"publico": 0.07, "mayorista": 0.04},
+    "Ecuador - Venezuela": {"publico": 0.10, "mayorista": 0.05},
+    "Colombia - Argentina": {"publico": 0.065, "mayorista": 0.035},
+    "Colombia - Europa": {"publico": 0.10, "mayorista": 0.05},
+    "Argentina - Ecuador": {"publico": 0.10, "mayorista": 0.05},
+    "Europa - Ecuador": {"publico": 0.10, "mayorista": 0.05},
+    "Colombia - Ecuador": {"publico": 0.10, "mayorista": 0.05},
 }
 
-fecha_actual = datetime.now().isoformat()
+# === Lógica de actualización ===
+def actualizar_todas_las_tasas():
+    print("\n🔁 Ejecutando actualización de tasas...")
 
-for pais, config in paises_config.items():
-    fiat = config["fiat"]
-    porcentaje = config["porcentaje"]
-    pay_type = config.get("pay_type")
-    country = config.get("country")
-
-    filtros = {
-        "pay_types": [pay_type] if pay_type else None,
-        "countries": [country] if country else None
+    paises = ["Venezuela", "Colombia", "Argentina", "Perú", "Brasil", "Europa", "USA", "México", "Panamá", "Ecuador", "Chile"]
+    fiats = {
+        "Venezuela": "VES", "Colombia": "COP", "Argentina": "ARS", "Perú": "PEN", "Brasil": "BRL", "Europa": "EUR",
+        "USA": "USD", "México": "MXN", "Panamá": "USD", "Ecuador": "USD", "Chile": "CLP"
     }
 
-    datos = get_p2p_data("USDT", fiat, "SELL", **filtros)
-    if datos and len(datos) >= 3:
-        precio = float(datos[2]['adv']['price'])  # tercera oferta
+    precios_usdt = {}
 
-        supabase.table("tasas").insert({
-            "nombre_tasa": f"USDT_SELL_{pais}",
-            "valor": round(precio, 4),
-            "fecha": fecha_actual
-        }).execute()
+    for pais in paises:
+        fiat = fiats[pais]
+        pay_types = ["Bizum"] if pais == "Europa" else []
 
-        tasa_full = round(precio / valor_kandui, 6)
-        tasa_publico = round(tasa_full * (1 - porcentaje), 6)
+        if pais == "Venezuela":
+            paso_1 = get_third_offer("USDT", fiat, "BUY")
+            if not paso_1: continue
+            monto = paso_1 * 300
+            buy_price = get_third_offer("USDT", fiat, "BUY", monto)
+        else:
+            paso_1 = get_third_offer("USDT", fiat, "BUY", None, pay_types)
+            if not paso_1: continue
+            monto = paso_1 * 100
+            buy_price = get_third_offer("USDT", fiat, "BUY", monto, pay_types)
 
-        supabase.table("tasas").insert([
-            {"nombre_tasa": f"Tasa full Chile-{pais}", "valor": round(tasa_full, 4), "fecha": fecha_actual},
-            {"nombre_tasa": f"Tasa público Chile-{pais}", "valor": round(tasa_publico, 4), "fecha": fecha_actual},
-        ]).execute()
+        if buy_price:
+            precios_usdt[pais] = buy_price
+            guardar_tasa(f"USDT en {pais}", buy_price)
+
+    for pais in paises:
+        fiat = fiats[pais]
+        pay_types = ["Bizum"] if pais == "Europa" else []
+
+        if pais == "Venezuela":
+            paso_1 = get_third_offer("USDT", fiat, "SELL")
+            if not paso_1: continue
+            monto = paso_1 * 300
+            sell_price = get_third_offer("USDT", fiat, "SELL", monto)
+        else:
+            paso_1 = get_third_offer("USDT", fiat, "SELL", None, pay_types)
+            if not paso_1: continue
+            monto = paso_1 * 100
+            sell_price = get_third_offer("USDT", fiat, "SELL", monto, pay_types)
+
+        if sell_price:
+            precios_usdt[f"{pais}_SELL"] = sell_price
+            guardar_tasa(f"USDT en {pais} (venta)", sell_price)
+
+    for origen in paises:
+        for destino in paises:
+            if origen == destino:
+                continue
+
+            precio_origen = precios_usdt.get(origen)
+            precio_destino = precios_usdt.get(f"{destino}_SELL")
+            if not precio_origen or not precio_destino:
+                print(f"❌ Faltan precios para {origen} - {destino}")
+                continue
+
+            base = f"{origen} - {destino}"
+            decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
+
+            tasa_full = precio_destino / precio_origen
+
+            if origen == "Chile" and destino == "USA":
+                tasa_publico = round(tasa_full * 1.07, decimales)
+                tasa_mayorista = round(tasa_full * 1.05, decimales)
+            else:
+                margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
+                tasa_publico = tasa_full * (1 - margen["publico"])
+                tasa_mayorista = tasa_full * (1 - margen["mayorista"])
+
+            guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
+            guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
+            guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
+
+            promedio_full = promedio_tasa(f"Tasa full {base}")
+            promedio_pub = promedio_tasa(f"Tasa público {base}")
+            promedio_may = promedio_tasa(f"Tasa mayorista {base}")
+
+            if promedio_full:
+                guardar_tasa(f"Tasa full promedio {base}", promedio_full, decimales)
+            if promedio_pub:
+                guardar_tasa(f"Tasa público promedio {base}", promedio_pub, decimales)
+            if promedio_may:
+                guardar_tasa(f"Tasa mayorista promedio {base}", promedio_may, decimales)
+
+            print(f"✅ Tasas {base} actualizadas.")
+
+    print("\n✅ Todas las tasas fueron actualizadas correctamente.")
+
+if __name__ == "__main__":
+    actualizar_todas_las_tasas()

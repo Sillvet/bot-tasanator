@@ -42,9 +42,7 @@ def trio_test(fn: Callable[ArgsT, Awaitable[RetT]]) -> Callable[ArgsT, RetT]:
             raise ValueError("too many clocks spoil the broth!")
         instruments = [i for i in kwargs.values() if isinstance(i, Instrument)]
         return _core.run(
-            partial(fn, *args, **kwargs),
-            clock=clock,
-            instruments=instruments,
+            partial(fn, *args, **kwargs), clock=clock, instruments=instruments
         )
 
     return wrapper
