@@ -1,0 +1,7 @@
+.env
+env/
+env311/
+__pycache__/
+*.xlsx
+*.pyc
+pyvenv.cfg
