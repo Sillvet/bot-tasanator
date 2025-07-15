@@ -6,6 +6,7 @@ import telebot
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from guardar_tasas import actualizar_todas_las_tasas
+from dateutil import parser  # 🔧 Corrección para manejar ISO con zona horaria
 
 # === CONFIGURACIÓN ===
 MODO_TEST = False
@@ -71,7 +72,7 @@ def obtener_tasas_par(nombre_par, user_id):
             for row in data:
                 if row["nombre_tasa"].lower() == nombre_tasa.lower() and row["fecha_actual"].startswith(hoy):
                     valor = float(row["valor"])
-                    hora = datetime.fromisoformat(row["fecha_actual"])
+                    hora = parser.isoparse(row["fecha_actual"])  # ✅ CORREGIDO
                     return valor, hora.strftime("%H:%M")
             return None, None
 
