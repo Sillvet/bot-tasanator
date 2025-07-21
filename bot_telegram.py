@@ -64,7 +64,14 @@ def obtener_pares_disponibles(nombre_pais):
 
 def obtener_tasas_par(nombre_par, user_id):
     try:
-        hoy = (datetime.utcnow() - timedelta(hours=4)).date().isoformat()
+        ahora = datetime.utcnow() - timedelta(hours=4)
+        hora_actual_num = ahora.hour
+        hoy = ahora.date().isoformat()
+        
+        # Si es antes de las 9 a.m., mostramos mensaje de fuera de horario
+        if hora_actual_num < 9:
+            return "🕒 Actualmente estamos fuera de horario laboral (9:00 a.m. - 9:00 p.m.). Por favor, consulta más tarde."
+
         response = supabase.table("tasas").select("*").order("fecha_actual", desc=True).execute()
         data = response.data
 
