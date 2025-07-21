@@ -96,6 +96,7 @@ def actualizar_todas_las_tasas():
 
     precios_usdt = {}
 
+    # Precios de compra
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -115,6 +116,7 @@ def actualizar_todas_las_tasas():
             precios_usdt[pais] = buy_price
             guardar_tasa(f"USDT en {pais}", buy_price)
 
+    # Precios de venta
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -134,6 +136,7 @@ def actualizar_todas_las_tasas():
             precios_usdt[f"{pais}_SELL"] = sell_price
             guardar_tasa(f"USDT en {pais} (venta)", sell_price)
 
+    # Cálculo de tasas
     for origen in paises:
         for destino in paises:
             if origen == destino:
@@ -148,16 +151,19 @@ def actualizar_todas_las_tasas():
             base = f"{origen} - {destino}"
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
 
-            tasa_full = precio_destino / precio_origen
-
+            # Ajuste especial Chile - USA
             if origen == "Chile" and destino == "USA":
-                tasa_publico = round(tasa_full * 1.07, decimales)
-                tasa_mayorista = round(tasa_full * 1.05, decimales)
+                tasa_full = precio_origen / precio_destino
+                margen = margenes_personalizados["Chile - USA"]
+                tasa_publico = tasa_full * (1 + margen["publico"])
+                tasa_mayorista = tasa_full * (1 + margen["mayorista"])
             else:
+                tasa_full = precio_destino / precio_origen
                 margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
                 tasa_publico = tasa_full * (1 - margen["publico"])
                 tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
+            # Guardar tasas
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
@@ -179,3 +185,4 @@ def actualizar_todas_las_tasas():
 
 if __name__ == "__main__":
     actualizar_todas_las_tasas()
+
