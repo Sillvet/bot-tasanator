@@ -56,32 +56,32 @@ def promedio_tasa(nombre):
         return float((valores[0] + valores[1]) / 2)
     return None
 
-# === Márgenes personalizados ===
+# === Márgenes personalizados (NUEVOS ESTÁNDARES) ===
 margenes_personalizados = {
-    "Chile - Venezuela": {"publico": 0.065, "mayorista": 0.035},
-    "Chile - Colombia": {"publico": 0.07, "mayorista": 0.04},
-    "Chile - Argentina": {"publico": 0.065, "mayorista": 0.035},
-    "Chile - Perú": {"publico": 0.12, "mayorista": 0.06},
+    "Chile - Venezuela": {"publico": 0.055, "mayorista": 0.044},
+    "Chile - Colombia": {"publico": 0.06, "mayorista": 0.04},
+    "Chile - Argentina": {"publico": 0.07, "mayorista": 0.05},
+    "Chile - Perú": {"publico": 0.06, "mayorista": 0.04},
     "Chile - Brasil": {"publico": 0.10, "mayorista": 0.05},
-    "Chile - Europa": {"publico": 0.10, "mayorista": 0.05},
-    "Chile - USA": {"publico": 0.07, "mayorista": 0.05},
-    "Chile - México": {"publico": 0.10, "mayorista": 0.05},
-    "Chile - Panamá": {"publico": 0.07, "mayorista": 0.04},
-    "Chile - Ecuador": {"publico": 0.10, "mayorista": 0.05},
-    "Colombia - Venezuela": {"publico": 0.065, "mayorista": 0.035},
-    "Argentina - Venezuela": {"publico": 0.065, "mayorista": 0.035},
-    "México - Venezuela": {"publico": 0.07, "mayorista": 0.04},
-    "USA - Venezuela": {"publico": 0.065, "mayorista": 0.035},
-    "Perú - Venezuela": {"publico": 0.12, "mayorista": 0.06},
+    "Chile - Europa": {"publico": 0.07, "mayorista": 0.05},
+    "Chile - USA": {"publico": 0.10, "mayorista": 0.07},
+    "Chile - México": {"publico": 0.10, "mayorista": 0.07},
+    "Chile - Panamá": {"publico": 0.07, "mayorista": 0.05},
+    "Chile - Ecuador": {"publico": 0.07, "mayorista": 0.05},
+    "Colombia - Venezuela": {"publico": 0.06, "mayorista": 0.04},
+    "Argentina - Venezuela": {"publico": 0.07, "mayorista": 0.04},
+    "México - Venezuela": {"publico": 0.10, "mayorista": 0.07},
+    "USA - Venezuela": {"publico": 0.10, "mayorista": 0.06},
+    "Perú - Venezuela": {"publico": 0.07, "mayorista": 0.04},
     "Brasil - Venezuela": {"publico": 0.10, "mayorista": 0.05},
     "Europa - Venezuela": {"publico": 0.10, "mayorista": 0.05},
     "Panamá - Venezuela": {"publico": 0.07, "mayorista": 0.04},
-    "Ecuador - Venezuela": {"publico": 0.10, "mayorista": 0.05},
-    "Colombia - Argentina": {"publico": 0.065, "mayorista": 0.035},
-    "Colombia - Europa": {"publico": 0.10, "mayorista": 0.05},
-    "Argentina - Ecuador": {"publico": 0.10, "mayorista": 0.05},
+    "Ecuador - Venezuela": {"publico": 0.07, "mayorista": 0.04},
+    "Colombia - Argentina": {"publico": 0.07, "mayorista": 0.04},
+    "Colombia - Europa": {"publico": 0.07, "mayorista": 0.04},
+    "Argentina - Ecuador": {"publico": 0.07, "mayorista": 0.04},
     "Europa - Ecuador": {"publico": 0.10, "mayorista": 0.05},
-    "Colombia - Ecuador": {"publico": 0.10, "mayorista": 0.05},
+    "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
 
 # === Lógica de actualización ===
@@ -151,17 +151,16 @@ def actualizar_todas_las_tasas():
             base = f"{origen} - {destino}"
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
 
-            # Ajuste especial Chile - USA
-            if origen == "Chile" and destino == "USA":
+            # Ajuste especial Colombia -> Venezuela
+            if origen == "Colombia" and destino == "Venezuela":
                 tasa_full = precio_origen / precio_destino
-                margen = margenes_personalizados["Chile - USA"]
-                tasa_publico = tasa_full * (1 + margen["publico"])
-                tasa_mayorista = tasa_full * (1 + margen["mayorista"])
             else:
                 tasa_full = precio_destino / precio_origen
-                margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
-                tasa_publico = tasa_full * (1 - margen["publico"])
-                tasa_mayorista = tasa_full * (1 - margen["mayorista"])
+
+            # Aplicar márgenes
+            margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
+            tasa_publico = tasa_full * (1 - margen["publico"])
+            tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
             # Guardar tasas
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
@@ -185,4 +184,3 @@ def actualizar_todas_las_tasas():
 
 if __name__ == "__main__":
     actualizar_todas_las_tasas()
-
