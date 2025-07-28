@@ -56,7 +56,7 @@ def promedio_tasa(nombre):
         return float((valores[0] + valores[1]) / 2)
     return None
 
-# === Márgenes personalizados (NUEVOS ESTÁNDARES) ===
+# === Márgenes personalizados ===
 margenes_personalizados = {
     "Chile - Venezuela": {"publico": 0.055, "mayorista": 0.044},
     "Chile - Colombia": {"publico": 0.06, "mayorista": 0.04},
@@ -96,7 +96,7 @@ def actualizar_todas_las_tasas():
 
     precios_usdt = {}
 
-    # Precios de compra
+    # === Precios de compra ===
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -116,7 +116,7 @@ def actualizar_todas_las_tasas():
             precios_usdt[pais] = buy_price
             guardar_tasa(f"USDT en {pais}", buy_price)
 
-    # Precios de venta
+    # === Precios de venta ===
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -136,7 +136,7 @@ def actualizar_todas_las_tasas():
             precios_usdt[f"{pais}_SELL"] = sell_price
             guardar_tasa(f"USDT en {pais} (venta)", sell_price)
 
-    # Cálculo de tasas
+    # === Cálculo de tasas ===
     for origen in paises:
         for destino in paises:
             if origen == destino:
@@ -151,8 +151,10 @@ def actualizar_todas_las_tasas():
             base = f"{origen} - {destino}"
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
 
-            # Ajuste especial Colombia -> Venezuela
+            # Ajustes especiales
             if origen == "Colombia" and destino == "Venezuela":
+                tasa_full = precio_origen / precio_destino
+            elif origen == "Chile" and destino == "USA":
                 tasa_full = precio_origen / precio_destino
             else:
                 tasa_full = precio_destino / precio_origen
