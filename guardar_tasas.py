@@ -58,7 +58,7 @@ def promedio_tasa(nombre):
 
 # === Márgenes personalizados ===
 margenes_personalizados = {
-    "Chile - Venezuela": {"publico": 0.055, "mayorista": 0.044},
+    "Chile - Venezuela": {"publico": 0.055, "mayorista": 0.040},
     "Chile - Colombia": {"publico": 0.06, "mayorista": 0.04},
     "Chile - Argentina": {"publico": 0.07, "mayorista": 0.05},
     "Chile - Perú": {"publico": 0.06, "mayorista": 0.04},
