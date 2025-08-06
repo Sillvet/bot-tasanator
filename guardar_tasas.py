@@ -161,8 +161,8 @@ def actualizar_todas_las_tasas():
 
             # Aplicar márgenes
             margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
-            tasa_publico = tasa_full * (1 - margen["publico"])
-            tasa_mayorista = tasa_full * (1 - margen["mayorista"])
+            tasa_publico = tasa_full * (1 + margen["publico"])
+            tasa_mayorista = tasa_full * (1 + margen["mayorista"])
 
             # Guardar tasas
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
