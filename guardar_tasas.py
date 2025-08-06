@@ -84,6 +84,12 @@ margenes_personalizados = {
     "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
 
+# === Pares que suman margen ===
+pares_sumar_margen = [
+    "Chile - USA",
+    "Colombia - Venezuela"
+]
+
 # === Lógica de actualización ===
 def actualizar_todas_las_tasas():
     print("\n🔁 Ejecutando actualización de tasas...")
@@ -151,24 +157,29 @@ def actualizar_todas_las_tasas():
             base = f"{origen} - {destino}"
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
 
-            # Ajustes especiales
-            if origen == "Colombia" and destino == "Venezuela":
-                tasa_full = precio_origen / precio_destino
-            elif origen == "Chile" and destino == "USA":
+            # === Cálculo de tasa base ===
+            if base in ["Colombia - Venezuela", "Chile - USA"]:
                 tasa_full = precio_origen / precio_destino
             else:
                 tasa_full = precio_destino / precio_origen
 
-            # Aplicar márgenes
+            # === Márgenes personalizados ===
             margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
-            tasa_publico = tasa_full * (1 + margen["publico"])
-            tasa_mayorista = tasa_full * (1 + margen["mayorista"])
+
+            # Si el par está en la lista, sumamos margen; si no, restamos
+            if base in pares_sumar_margen:
+                tasa_publico = tasa_full * (1 + margen["publico"])
+                tasa_mayorista = tasa_full * (1 + margen["mayorista"])
+            else:
+                tasa_publico = tasa_full * (1 - margen["publico"])
+                tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
             # Guardar tasas
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
 
+            # Promedios
             promedio_full = promedio_tasa(f"Tasa full {base}")
             promedio_pub = promedio_tasa(f"Tasa público {base}")
             promedio_may = promedio_tasa(f"Tasa mayorista {base}")
@@ -183,6 +194,7 @@ def actualizar_todas_las_tasas():
             print(f"✅ Tasas {base} actualizadas.")
 
     print("\n✅ Todas las tasas fueron actualizadas correctamente.")
+
 
 if __name__ == "__main__":
     actualizar_todas_las_tasas()
