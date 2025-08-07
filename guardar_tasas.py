@@ -155,7 +155,8 @@ def actualizar_todas_las_tasas():
                 continue
 
             base = f"{origen} - {destino}"
-            decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa"] else 4
+            decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa", "Brasil"] else 4
+
 
             # === Cálculo de tasa base ===
             if base in ["Colombia - Venezuela", "Chile - USA"]:
