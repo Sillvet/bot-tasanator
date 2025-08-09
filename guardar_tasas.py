@@ -84,13 +84,8 @@ margenes_personalizados = {
     "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
 
-# === Pares que suman margen ===
-pares_sumar_margen = [
-    "Chile - USA",
-    "Colombia - Venezuela"
-]
+pares_sumar_margen = ["Chile - USA", "Colombia - Venezuela"]
 
-# === Lógica de actualización ===
 def actualizar_todas_las_tasas():
     print("\n🔁 Ejecutando actualización de tasas...")
 
@@ -102,7 +97,7 @@ def actualizar_todas_las_tasas():
 
     precios_usdt = {}
 
-    # === Precios de compra ===
+    # === Compra ===
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -122,7 +117,7 @@ def actualizar_todas_las_tasas():
             precios_usdt[pais] = buy_price
             guardar_tasa(f"USDT en {pais}", buy_price)
 
-    # === Precios de venta ===
+    # === Venta ===
     for pais in paises:
         fiat = fiats[pais]
         pay_types = ["Bizum"] if pais == "Europa" else []
@@ -132,6 +127,32 @@ def actualizar_todas_las_tasas():
             if not paso_1: continue
             monto = paso_1 * 300
             sell_price = get_third_offer("USDT", fiat, "SELL", monto)
+
+        elif pais == "USA":
+            try:
+                url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+                headers = {'Content-Type': 'application/json'}
+                payload = {
+                    "asset": "USDT",
+                    "fiat": "USD",
+                    "merchantCheck": False,
+                    "page": 1,
+                    "rows": 10,
+                    "tradeType": "SELL",
+                    "payTypes": [],
+                    "countries": []
+                }
+                response = requests.post(url, headers=headers, json=payload)
+                data = response.json()
+                if data["code"] == "000000" and len(data["data"]) >= 1:
+                    precio_base = float(data["data"][0]["adv"]["price"])
+                    monto = precio_base * 100
+                    sell_price = get_third_offer("USDT", "USD", "SELL", monto, ["Zelle"])
+                else:
+                    continue
+            except:
+                continue
+
         else:
             paso_1 = get_third_offer("USDT", fiat, "SELL", None, pay_types)
             if not paso_1: continue
@@ -151,23 +172,18 @@ def actualizar_todas_las_tasas():
             precio_origen = precios_usdt.get(origen)
             precio_destino = precios_usdt.get(f"{destino}_SELL")
             if not precio_origen or not precio_destino:
-                print(f"❌ Faltan precios para {origen} - {destino}")
                 continue
 
             base = f"{origen} - {destino}"
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa", "Brasil"] else 4
 
-
-            # === Cálculo de tasa base ===
-            if base in ["Colombia - Venezuela", "Chile - USA"]:
+            if base in pares_sumar_margen:
                 tasa_full = precio_origen / precio_destino
             else:
                 tasa_full = precio_destino / precio_origen
 
-            # === Márgenes personalizados ===
             margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
 
-            # Si el par está en la lista, sumamos margen; si no, restamos
             if base in pares_sumar_margen:
                 tasa_publico = tasa_full * (1 + margen["publico"])
                 tasa_mayorista = tasa_full * (1 + margen["mayorista"])
@@ -175,12 +191,10 @@ def actualizar_todas_las_tasas():
                 tasa_publico = tasa_full * (1 - margen["publico"])
                 tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
-            # Guardar tasas
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
 
-            # Promedios
             promedio_full = promedio_tasa(f"Tasa full {base}")
             promedio_pub = promedio_tasa(f"Tasa público {base}")
             promedio_may = promedio_tasa(f"Tasa mayorista {base}")
@@ -195,7 +209,6 @@ def actualizar_todas_las_tasas():
             print(f"✅ Tasas {base} actualizadas.")
 
     print("\n✅ Todas las tasas fueron actualizadas correctamente.")
-
 
 if __name__ == "__main__":
     actualizar_todas_las_tasas()
