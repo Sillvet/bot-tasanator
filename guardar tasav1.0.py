@@ -26,7 +26,7 @@ def get_third_offer(asset, fiat, trade_type, amount=None, pay_types=None):
         if data['code'] == '000000' and len(data['data']) >= 3:
             return float(data['data'][2]['adv']['price'])
         else:
-            print(f"⚠️ Menos de 3 ofertas para {fiat} {trade_type} (amount: {amount}, pay_types: {pay_types})")
+            print(f"⚠️ Menos de 3 ofertas para {fiat} {trade_type} (amount: {amount})")
             return None
     except Exception as e:
         print(f"❌ Error al obtener tercera oferta: {e}")
@@ -84,19 +84,7 @@ margenes_personalizados = {
     "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
 
-# === Pares con margen por suma (el resto resta) ===
 pares_sumar_margen = ["Chile - USA", "Colombia - Venezuela"]
-
-# === Mapeo de métodos de pago por país ===
-paytype_map = {
-    "Europa": ["Bizum"],
-    "Colombia": ["Bancolombia"],
-    "Perú": ["Banco de Credito"],
-    "USA": ["Zelle"],
-    "Ecuador": ["Banco Pichincha"],
-    "Panamá": ["Mercantil Bank Panama"],
-    # Si quieres agregar más: "México": ["Transferencia SPEI"], etc.
-}
 
 def actualizar_todas_las_tasas():
     print("\n🔁 Ejecutando actualización de tasas...")
@@ -109,21 +97,19 @@ def actualizar_todas_las_tasas():
 
     precios_usdt = {}
 
-    # === Compra (BUY) ===
+    # === Compra ===
     for pais in paises:
         fiat = fiats[pais]
-        pay_types = paytype_map.get(pais, [])
+        pay_types = ["Bizum"] if pais == "Europa" else []
 
         if pais == "Venezuela":
-            paso_1 = get_third_offer("USDT", fiat, "BUY", None, pay_types)  # en VES sin filtro (o añade si luego lo defines)
-            if not paso_1: 
-                continue
+            paso_1 = get_third_offer("USDT", fiat, "BUY")
+            if not paso_1: continue
             monto = paso_1 * 300
-            buy_price = get_third_offer("USDT", fiat, "BUY", monto, pay_types)
+            buy_price = get_third_offer("USDT", fiat, "BUY", monto)
         else:
             paso_1 = get_third_offer("USDT", fiat, "BUY", None, pay_types)
-            if not paso_1: 
-                continue
+            if not paso_1: continue
             monto = paso_1 * 100
             buy_price = get_third_offer("USDT", fiat, "BUY", monto, pay_types)
 
@@ -131,21 +117,45 @@ def actualizar_todas_las_tasas():
             precios_usdt[pais] = buy_price
             guardar_tasa(f"USDT en {pais}", buy_price)
 
-    # === Venta (SELL) ===
+    # === Venta ===
     for pais in paises:
         fiat = fiats[pais]
-        pay_types = paytype_map.get(pais, [])
+        pay_types = ["Bizum"] if pais == "Europa" else []
 
         if pais == "Venezuela":
-            paso_1 = get_third_offer("USDT", fiat, "SELL", None, pay_types)
-            if not paso_1: 
-                continue
+            paso_1 = get_third_offer("USDT", fiat, "SELL")
+            if not paso_1: continue
             monto = paso_1 * 300
-            sell_price = get_third_offer("USDT", fiat, "SELL", monto, pay_types)
+            sell_price = get_third_offer("USDT", fiat, "SELL", monto)
+
+        elif pais == "USA":
+            try:
+                url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+                headers = {'Content-Type': 'application/json'}
+                payload = {
+                    "asset": "USDT",
+                    "fiat": "USD",
+                    "merchantCheck": False,
+                    "page": 1,
+                    "rows": 10,
+                    "tradeType": "SELL",
+                    "payTypes": [],
+                    "countries": []
+                }
+                response = requests.post(url, headers=headers, json=payload)
+                data = response.json()
+                if data["code"] == "000000" and len(data["data"]) >= 1:
+                    precio_base = float(data["data"][0]["adv"]["price"])
+                    monto = precio_base * 100
+                    sell_price = get_third_offer("USDT", "USD", "SELL", monto, ["Zelle"])
+                else:
+                    continue
+            except:
+                continue
+
         else:
             paso_1 = get_third_offer("USDT", fiat, "SELL", None, pay_types)
-            if not paso_1: 
-                continue
+            if not paso_1: continue
             monto = paso_1 * 100
             sell_price = get_third_offer("USDT", fiat, "SELL", monto, pay_types)
 
@@ -165,10 +175,8 @@ def actualizar_todas_las_tasas():
                 continue
 
             base = f"{origen} - {destino}"
-            # 5 decimales para Chile -> (Panamá, Ecuador, Europa, Brasil)
             decimales = 5 if origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa", "Brasil"] else 4
 
-            # Tasa base (algunos pares se invierten)
             if base in pares_sumar_margen:
                 tasa_full = precio_origen / precio_destino
             else:
@@ -176,7 +184,6 @@ def actualizar_todas_las_tasas():
 
             margen = margenes_personalizados.get(base, {"publico": 0.07, "mayorista": 0.03})
 
-            # Márgenes: sumar para pares especiales, restar para el resto
             if base in pares_sumar_margen:
                 tasa_publico = tasa_full * (1 + margen["publico"])
                 tasa_mayorista = tasa_full * (1 + margen["mayorista"])
@@ -188,7 +195,6 @@ def actualizar_todas_las_tasas():
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
 
-            # Promedios
             promedio_full = promedio_tasa(f"Tasa full {base}")
             promedio_pub = promedio_tasa(f"Tasa público {base}")
             promedio_may = promedio_tasa(f"Tasa mayorista {base}")

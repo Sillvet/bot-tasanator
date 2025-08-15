@@ -7,10 +7,10 @@ TELEGRAM_TOKEN = os.getenv("CALCULADORA_TOKEN")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-@bot.message_handler(func=lambda m: True)
+@bot.message_handler(commands=['chatid'])
 def get_chat_id(message):
-    bot.reply_to(message, f"El chat_id de este grupo es: {message.chat.id}")
-    print(f"Chat ID detectado: {message.chat.id}")
+    bot.reply_to(message, f"📌 El chat_id de este grupo es: {message.chat.id}")
+    print(f"🔍 Chat ID detectado: {message.chat.id}")
 
-print("✅ Bot esperando mensajes. Escribe algo en el grupo para obtener el chat_id...")
+print("✅ Bot esperando comando /chatid para mostrar el chat_id del grupo...")
 bot.infinity_polling()
