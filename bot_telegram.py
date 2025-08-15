@@ -9,7 +9,7 @@ from guardar_tasas import actualizar_todas_las_tasas
 from dateutil import parser  # 🔧 Corrección para manejar ISO con zona horaria
 
 # === CONFIGURACIÓN ===
-MODO_TEST = true
+MODO_TEST = True
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
