@@ -1,6 +1,9 @@
 services:
-  - type: worker
-    name: bot-tasanator
-    env: docker
-    dockerfilePath: ./Dockerfile
-    plan: free
+  - type: cron
+    name: p2p-tasanator
+    env: python
+    plan: starter
+    region: oregon
+    schedule: "0 13-23,0-1 * * *"   # 9am–9pm VET, cada hora
+    buildCommand: pip install -r requirements.txt && playwright install --with-deps
+    startCommand: python p2p_ui_top5_pares_reglas_integrado_anypage.py
