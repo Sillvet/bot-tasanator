@@ -7,8 +7,9 @@ services:
     schedule: "0 13-23,0-1 * * *"   # 9am–9pm VET, cada hora
     envVars:
       - key: PLAYWRIGHT_BROWSERS_PATH
-        value: "0"                 # instala navegadores en el workspace del build
+        value: "0"
     buildCommand: |
+      python -m pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
       python -m playwright install chromium
     startCommand: python guardartasas.py
