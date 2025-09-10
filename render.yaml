@@ -5,5 +5,10 @@ services:
     plan: starter
     region: oregon
     schedule: "0 13-23,0-1 * * *"   # 9am–9pm VET, cada hora
-    buildCommand: pip install -r requirements.txt && playwright install --with-deps
-    startCommand: python p2p_ui_top5_pares_reglas_integrado_anypage.py
+    envVars:
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"                 # instala navegadores en el workspace del build
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+    startCommand: python guardartasas.py
