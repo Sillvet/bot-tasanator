@@ -1,15 +1,52 @@
 services:
+  # 1) CRON: recolector de tasas (cada hora 9am–9pm VET)
   - type: cron
     name: p2p-tasanator
     env: python
     plan: starter
     region: oregon
-    schedule: "0 13-23,0-1 * * *"   # 9am–9pm VET, cada hora
-    envVars:
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: "0"
+    schedule: "0 13-23,0-1 * * *"     # 9am–9pm VET, cada hora
     buildCommand: |
-      python -m pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
-      python -m playwright install chromium
-    startCommand: python guardartasas.py
+      python -m playwright install --with-deps chromium
+    startCommand: python guardar_tasas.py    # ✅ nombre correcto
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TZ
+        value: America/Caracas
+
+  # 2) WORKER: bot de Telegram (en línea 24/7)
+  - type: worker
+    name: tasanator-bot
+    env: python
+    plan: starter
+    region: oregon
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install --with-deps chromium
+    startCommand: python bot_telegram.py
+    autoDeploy: true
+    envVars:
+      - key: TASANATOR_TOKEN
+        sync: false
+      - key: TASANATOR_USERNAME
+        value: Tasanator_Bot
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: USUARIOS_AUTORIZADOS
+        sync: false
+      - key: USUARIO_LIMITADO
+        sync: false
+      - key: USUARIO_RESTRINGIDO
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TZ
+        value: America/Caracas
