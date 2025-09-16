@@ -1,34 +1,5 @@
 services:
   - type: worker
-    name: tasanator-bot
-    env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      python -m playwright install chromium
-    startCommand: python -u bot_telegram.py
-    autoDeploy: true
-    envVars:
-      - key: TASANATOR_TOKEN
-        sync: false
-      - key: TASANATOR_USERNAME
-        value: Tasanator_Bot
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: USUARIOS_AUTORIZADOS
-        sync: false
-      - key: USUARIO_LIMITADO
-        sync: false
-      - key: USUARIO_RESTRINGIDO
-        sync: false
-      - key: PYTHONUNBUFFERED
-        value: "1"
-      - key: TZ
-        value: America/Caracas
-
-  # NUEVO: cron como worker
-  - type: worker
     name: tasanator-cron-worker
     env: python
     buildCommand: |
@@ -45,3 +16,6 @@ services:
         value: "1"
       - key: TZ
         value: America/Caracas
+      # Opcional para probar una corrida al arrancar
+      # - key: CRON_FORCE_RUN
+      #   value: "1"
