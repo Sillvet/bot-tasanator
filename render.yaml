@@ -27,14 +27,15 @@ services:
       - key: TZ
         value: America/Caracas
 
-  - type: cron
-    name: tasanator-cron
+  # NUEVO: cron como worker
+  - type: worker
+    name: tasanator-cron-worker
     env: python
-    schedule: "0 13-23,0-1 * * *"
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install chromium
-    command: python guardar_tasas.py
+    startCommand: python -u cron_worker.py
+    autoDeploy: true
     envVars:
       - key: SUPABASE_URL
         sync: false
