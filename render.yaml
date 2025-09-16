@@ -1,5 +1,4 @@
 services:
-  # 1) BOT (worker 24/7)
   - type: worker
     name: tasanator-bot
     env: python
@@ -28,11 +27,10 @@ services:
       - key: TZ
         value: America/Caracas
 
-  # 2) CRON (actualiza tasas cada hora 9am–9pm VET)
   - type: cron
     name: tasanator-cron
     env: python
-    schedule: "0 13-23,0-1 * * *"   # 9am–9pm VET cada hora
+    schedule: "0 13-23,0-1 * * *"
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install chromium
