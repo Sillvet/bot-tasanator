@@ -1,16 +1,16 @@
 services:
-  # CRON: actualiza tasas cada hora (ajusta el schedule si quieres)
+  # CRON: actualiza tasas (9am–9pm VET, cada hora)
   - type: cron
-    name: p2p-tasanator
+    name: tasanator-cron
     env: python
-    pythonVersion: 3.10.13           # ✅ fijamos Python
+    pythonVersion: 3.10.13
     plan: starter
     region: oregon
-    schedule: "0 13-23,0-1 * * *"    # 9am–9pm VET, cada hora
+    schedule: "0 13-23,0-1 * * *"      # 9am–9pm VET
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install --with-deps chromium
-    startCommand: python guardar_tasas.py   # ✅ nombre correcto
+    startCommand: python guardar_tasas.py
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -25,13 +25,14 @@ services:
   - type: worker
     name: tasanator-bot
     env: python
-    pythonVersion: 3.10.13           # ✅ igual aquí
+    pythonVersion: 3.10.13
     plan: starter
     region: oregon
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install --with-deps chromium
     startCommand: python -u bot_telegram.py
+    autoDeploy: true
     envVars:
       - key: TASANATOR_TOKEN
         sync: false
