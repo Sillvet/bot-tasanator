@@ -1,19 +1,52 @@
 # cron_worker.py
-import os, sys, time, signal, traceback
-from datetime import datetime
+import os, sys, time, signal, subprocess, traceback
+from datetime import datetime, timezone
 
-def log(msg: str):
+def log(msg):
     print(msg, flush=True)
+
+# --- Playwright bootstrap: instala Chromium si falta ---
+def ensure_playwright_chromium():
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/.cache/ms-playwright")
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        log("❌ Playwright no está instalado (revisa requirements.txt).")
+        return
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            b.close()
+        log("✅ Chromium disponible.")
+        return
+    except Exception as e:
+        log(f"ℹ️ Chromium no disponible aún: {e}")
+
+    log("⬇️ Instalando navegadores de Playwright (chromium)…")
+    try:
+        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+        proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
+        log(proc.stdout or "")
+        if proc.returncode != 0:
+            log(f"⚠️ 'playwright install chromium' terminó con código {proc.returncode}. STDERR:\n{proc.stderr}")
+        else:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                b = p.chromium.launch(headless=True)
+                b.close()
+            log("✅ Chromium instalado y verificado.")
+    except Exception:
+        log("❌ Error instalando Chromium:")
+        log(traceback.format_exc())
 
 log(f"🚀 cron_worker arrancando | Python: {sys.version}")
 try:
     log(f"📂 CWD: {os.getcwd()}")
     try:
         log(f"📄 Files: {os.listdir('.')}")
-    except Exception as e:
-        log(f"⚠️ No pude listar archivos: {e}")
+    except Exception as _e:
+        log(f"⚠️ No pude listar archivos: {_e}")
 
-    # Zona horaria
     TZ = os.getenv("TZ", "America/Caracas")
     os.environ["TZ"] = TZ
     try:
@@ -25,35 +58,34 @@ try:
         log(traceback.format_exc())
         raise
 
-    # Import diferido para ver fallos reales
+    # Asegura Playwright antes de usarlo en guardar_tasas
+    ensure_playwright_chromium()
+
     try:
         from guardar_tasas import actualizar_todas_las_tasas
     except Exception:
-        log("❌ Error importando guardar_tasas.actualizar_todas_las_tasas:")
+        log("❌ Error importando guardar_todas_las_tasas:")
         log(traceback.format_exc())
         raise
 
-    # Ventana horaria (inclusive) y fuerza de corrida inicial
-    RUN_START = int(os.getenv("RUN_START", "9"))   # 09:00
-    RUN_END   = int(os.getenv("RUN_END",   "21"))  # 21:00
+    RUN_START = int(os.getenv("RUN_START", "9"))     # 09:00 VET
+    RUN_END   = int(os.getenv("RUN_END",   "21"))    # 21:00 VET
     FORCE_RUN = os.getenv("CRON_FORCE_RUN", "0") == "1"
 
-    STOP = False
+    # >>> CORRECCIÓN AQUÍ: usar global, no nonlocal <<<
+    stop = False
     def _stop(sig, frm):
-        nonlocal_var = None  # sólo para que el editor no se queje
-        # usamos global para no depender de 'nonlocal'
-        global STOP
-        STOP = True
+        global stop
+        stop = True
         log(f"🛑 Señal recibida: {sig}")
+
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
     def now_vet():
-        # Evita 'astimezone() cannot be applied to a naive datetime'
-        return datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(tz)
+        return datetime.now(timezone.utc).astimezone(tz)
 
     def should_run(dt):
-        # ejecuta cuando el minuto sea 0, entre RUN_START y RUN_END (inclusive)
         return RUN_START <= dt.hour <= RUN_END and dt.minute == 0
 
     last_run_key = None
@@ -68,7 +100,7 @@ try:
             log("❌ Error en actualización inicial:")
             log(traceback.format_exc())
 
-    while not STOP:
+    while not stop:
         try:
             dt = now_vet()
             key = (dt.date(), dt.hour)
