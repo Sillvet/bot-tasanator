@@ -8,7 +8,6 @@ attrs==23.2.0
 beautifulsoup4==4.12.3
 cachetools==5.3.3
 certifi==2024.2.2
-cffi==1.16.0
 charset-normalizer==3.3.2
 colorama==0.4.6
 dateparser==1.2.0
@@ -76,3 +75,4 @@ yarl==1.20.0
 pyTelegramBotAPI==4.16.1
 playwright>=1.45
 cryptography==42.0.8
+cffi==1.17.1
