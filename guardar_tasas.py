@@ -1,4 +1,3 @@
-
 from typing import List, Tuple, Dict, Any, Optional
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -28,6 +27,8 @@ PAYTYPE_IDS: Dict[str, List[str]] = {
         "Mercantil Bank Panamá",
         "Mercantil"
     ],
+    # Método Mercantil (Venezuela)
+    "Mercantil": ["Mercantil", "Banco Mercantil"],
 }
 KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Zelle": ["zelle"],
@@ -36,11 +37,12 @@ KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Banco de Credito": ["banco de credito", "banco de crédito", "bcp"],
     "Banco Pichincha": ["pichincha"],
     "Mercantil Bank Panama": ["mercantil bank panama", "mercantil bank panamá", "mercantil"],
+    "Mercantil": ["mercantil", "banco mercantil"],
 }
 
 # ------- Mercados -------
 BUY_CONFIGS = [
-    {"label": "Venezuela", "fiat": "VES", "method": None,                "countries": ["VE"]},
+    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",         "countries": ["VE"]},
     {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",       "countries": ["CO"]},
     {"label": "Argentina", "fiat": "ARS", "method": None,                "countries": ["AR"]},
     {"label": "Perú",      "fiat": "PEN", "method": "Banco de Credito",  "countries": ["PE"]},
@@ -52,7 +54,7 @@ BUY_CONFIGS = [
     {"label": "Chile",     "fiat": "CLP", "method": None,                "countries": ["CL"]},
 ]
 SELL_CONFIGS = [
-    {"label": "Venezuela", "fiat": "VES", "method": None,                "countries": ["VE"]},
+    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",         "countries": ["VE"]},
     {"label": "Argentina", "fiat": "ARS", "method": None,                "countries": ["AR"]},
     {"label": "Brasil",    "fiat": "BRL", "method": None,                "countries": ["BR"]},
     {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",       "countries": ["CO"]},
@@ -64,6 +66,13 @@ SELL_CONFIGS = [
     {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",   "countries": ["EC"]},
     {"label": "Chile",     "fiat": "CLP", "method": None,                "countries": ["CL"]},
 ]
+
+# ------- Índice base por mercado (se usa solo para BUY; SELL toma siempre la #1) -------
+BASE_INDEX_BY_MARKET: Dict[Tuple[str, str], int] = {
+    # ejemplo si quieres alguna compra con índice distinto (p.ej. Venezuela BUY = 10):
+    # ("Venezuela", "BUY"): 10,
+    # todo lo demás usa TOP_N = 5
+}
 
 # ------- Márgenes -------
 margenes_personalizados = {
@@ -100,12 +109,8 @@ def margen_por_defecto(base: str) -> Dict[str, float]:
         return {"publico": 0.07, "mayorista": 0.10}
     return {"publico": 0.07, "mayorista": 0.03}
 
-# ------- NUEVO: Decimales dinámicos -------
+# ------- Decimales dinámicos -------
 def decimales_auto(t: float, origen: str, destino: str) -> int:
-    """
-    Elige cuántos decimales guardar según la magnitud de la tasa,
-    preservando tu regla original de Chile (5 decimales en algunos destinos).
-    """
     base_rule = 5 if (origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa", "Brasil"]) else 4
     if t < 0.0001:
         mag_rule = 8
@@ -128,7 +133,8 @@ def page_url(fiat: str, side: str) -> str:
 
 def parse_price(v: Any) -> Optional[float]:
     try:
-        return float(str(v).replace(",", "").strip())
+        s = str(v).replace(",", "").replace("\u00A0", "").strip()
+        return float(s)
     except Exception:
         return None
 
@@ -183,6 +189,13 @@ def _items_keyword_filter(items, needles: List[str], method_label: Optional[str]
                 continue
     return out
 
+def _sort_items_by_price_asc(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _p(it):
+        adv = it.get("adv") or {}
+        pr = parse_price(adv.get("price"))
+        return pr if pr is not None else float("inf")
+    return sorted(items or [], key=_p)
+
 # --- Petición dentro del contexto de la página (como la UI) ---
 def fetch_ui_page(page, fiat: str, side: str, countries: Optional[List[str]], pay_types: Optional[List[str]], page_no: int):
     api = f"{BASE}/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -210,29 +223,51 @@ def fetch_ui_page(page, fiat: str, side: str, countries: Optional[List[str]], pa
     return (data or {}).get("data") or []
 
 def capture_first_page(fiat: str, side: str, countries: Optional[List[str]]) -> List[Dict[str, Any]]:
+    """
+    Captura la primera página como la UI. Parche específico para CLP:
+      - Intenta primero SIN país (None), que es lo que muestra la UI.
+      - Si viene vacío, hace fallback a ["CL"].
+      - Para el resto de FIATs, se respeta 'countries' tal cual.
+
+    Para SELL, ordenamos ascendente por precio para que [01] sea la más barata.
+    """
     url = page_url(fiat, side)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(locale="es-ES")
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
-        items = fetch_ui_page(pg, fiat, side, countries, None, 1)
+
+        def _try(cset):
+            return fetch_ui_page(pg, fiat, side, cset, None, 1)
+
+        if fiat == "CLP":
+            items = _try(None)
+            if not items:
+                items = _try(["CL"])
+            if not items and countries is not None:
+                items = _try(countries)
+        else:
+            items = _try(countries)
+
         browser.close()
+
+    if side.upper() == "SELL":
+        items = _sort_items_by_price_asc(items)
     return items
 
 def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
                                  countries: Optional[List[str]], need_n: int = TOP_N) -> List[Dict[str, Any]]:
     """
     Reúne hasta need_n ofertas para un método, recorriendo páginas.
-    Estrategia:
       1) payTypes con countries=[], luego countries indicados (si hay).
       2) Fallback sin payTypes + filtro local por método/keywords.
+    Para SELL, ordenamos ascendente al final.
     """
     method_ids = PAYTYPE_IDS.get(method_label, [])
     url = page_url(fiat, side)
 
-    # países a intentar (primero GLOBAL para no perder ofertas)
-    country_sets: List[Optional[List[str]]] = [None]  # None -> []
+    country_sets: List[Optional[List[str]]] = [None]
     if countries:
         country_sets.append(countries)
 
@@ -245,7 +280,7 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
 
-        # 1) Intento con payTypes
+        # 1) Con payTypes
         for cset in country_sets:
             for page_no in range(1, MAX_PAGES_METHOD + 1):
                 arr = fetch_ui_page(pg, fiat, side, cset, method_ids, page_no)
@@ -263,7 +298,7 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
             if len(collected) >= need_n:
                 break
 
-        # 2) Fallback local si faltan
+        # 2) Fallback sin payTypes + filtro local
         if len(collected) < need_n:
             for cset in country_sets:
                 for page_no in range(1, MAX_PAGES_METHOD + 1):
@@ -285,8 +320,9 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
 
         browser.close()
 
-    # Orden por precio ascendente (coincide con la UI por “Ordenar por precio”)
-    collected.sort(key=lambda it: parse_price((it.get("adv") or {}).get("price")) or 0.0)
+    if side.upper() == "SELL":
+        collected = _sort_items_by_price_asc(collected)
+
     return collected[:need_n]
 
 def topN_from_items(items: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
@@ -308,7 +344,8 @@ def print_block(label: str, fiat: str, side: str, offers: List[Dict[str, Any]]):
         print("Sin resultados.")
         return
     for i, o in enumerate(offers, 1):
-        print(f"[{i:02d}] precio={o['price']} | vendedor={o['seller']} | métodos={', '.join(o['methods'])}")
+        ms = ", ".join(o['methods']) if o.get('methods') else ""
+        print(f"[{i:02d}] precio={o['price']} | vendedor={o['seller']} | métodos={ms}")
 
 # ------- Supabase -------
 def guardar_tasa(nombre: str, valor: float, decimales: int = 4):
@@ -341,26 +378,39 @@ def promedio_tasa(nombre: str) -> Optional[float]:
 # ------- Orquestación -------
 def tomar_base_y_guardar(label: str, fiat: str, side: str,
                          method: Optional[str], countries: Optional[List[str]]) -> Optional[Dict[str, Any]]:
-    # Si hay method, buscamos hasta conseguir 5 aunque no estén en la primera página.
-    if method:
-        items = capture_method_topN_any_page(fiat, side, method, countries, need_n=TOP_N)
-    else:
-        items = capture_first_page(fiat, side, countries)
+    side_u = side.upper()
 
-    offers = topN_from_items(items, TOP_N)
-    print_block(label, fiat, side, offers)
+    # Regla pedida:
+    # - SELL: siempre mostrar 10 y guardar la #1 (la más barata)
+    # - BUY: conservar comportamiento previo (índice por mercado o TOP_N=5)
+    if side_u == "SELL":
+        base_idx = 1
+        need_n = 10
+    else:
+        base_idx = BASE_INDEX_BY_MARKET.get((label, side_u), TOP_N)
+        need_n = base_idx
+
+    # Captura
+    if method:
+        items = capture_method_topN_any_page(fiat, side_u, method, countries, need_n=need_n)
+    else:
+        items = capture_first_page(fiat, side_u, countries)
+
+    offers = topN_from_items(items, need_n)
+    print_block(label, fiat, side_u, offers)
     if not offers:
         return None
 
-    base = offers[TOP_N - 1] if len(offers) >= TOP_N else offers[-1]
+    base = offers[base_idx - 1] if len(offers) >= base_idx else offers[-1]
     precio_base = base["price"]
     vendedor = base["seller"]
     metodos = base["methods"]
 
-    quien = "comprador" if side.upper() == "SELL" else "vendedor"
-    print(f"➡️  Base para {label} {side}: precio={precio_base} | {quien}={vendedor} | métodos={', '.join(metodos)}")
+    quien = "comprador" if side_u == "SELL" else "vendedor"
+    ms = ", ".join(metodos) if metodos else ""
+    print(f"➡️  Base para {label} {side_u}: precio={precio_base} | {quien}={vendedor} | métodos={ms}")
 
-    nombre = f"USDT en {label}" + (" (venta)" if side.upper() == "SELL" else "")
+    nombre = f"USDT en {label}" + (" (venta)" if side_u == "SELL" else "")
     guardar_tasa(nombre, precio_base)
 
     return {"price": float(precio_base), "seller": vendedor, "methods": metodos, "fiat": fiat}
@@ -375,16 +425,13 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
             p_origen = odata["price"]
             p_dest   = ddata["price"]
 
-            # FULL (según pares_sumar_margen)
             if base in pares_sumar_margen:
                 tasa_full = p_origen / p_dest
             else:
                 tasa_full = p_dest / p_origen
 
-            # ⬇️ NUEVO: decimales según magnitud (más la regla especial de Chile)
             decimales = decimales_auto(tasa_full, origen, destino)
 
-            # Márgenes
             margen = margenes_personalizados.get(base, margen_por_defecto(base))
             if base in pares_sumar_margen:
                 tasa_publico   = tasa_full * (1 + margen["publico"])
@@ -393,12 +440,10 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
                 tasa_publico   = tasa_full * (1 - margen["publico"])
                 tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
-            # Guardar
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
 
-            # Promedios (media móvil 2)
             pf = promedio_tasa(f"Tasa full {base}")
             pp = promedio_tasa(f"Tasa público {base}")
             pm = promedio_tasa(f"Tasa mayorista {base}")
@@ -412,7 +457,7 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
             print(f"✅ Tasas {base} actualizadas.")
 
 def main():
-    print("\n🔁 Ejecutando actualización (UI → top 5; base=5ª oferta; method=multi-página)...")
+    print("\n🔁 Ejecutando actualización (UI → 10 en SELL guarda #1; BUY mantiene índice; method=multi-página con parches CLP)…")
 
     precios_buy: Dict[str, Dict[str, Any]] = {}
     precios_sell: Dict[str, Dict[str, Any]] = {}
@@ -423,7 +468,7 @@ def main():
         if res:
             precios_buy[cfg["label"]] = res
 
-    # SELL (incluye Brasil)
+    # SELL (incluye Brasil) — ahora todos guardan la #1 (más barata)
     for cfg in SELL_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "SELL", cfg.get("method"), cfg.get("countries"))
         if res:
@@ -439,4 +484,3 @@ def actualizar_todas_las_tasas():
 
 if __name__ == "__main__":
     main()
-
