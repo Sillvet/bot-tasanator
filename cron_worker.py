@@ -2,6 +2,13 @@ import os
 import time
 from datetime import datetime, timedelta
 import pytz
+# ↙️ agrega esto arriba, junto con tus otros imports
+try:
+    from guardar_tasas import actualizar_todas_las_tasas
+except Exception as e:
+    print(f"⚠️ No se pudo importar actualizar_todas_las_tasas desde guardar_tasas: {e}")
+    raise
+
 
 # === Config desde entorno ===
 TZ_NAME = "America/Caracas"
