@@ -29,6 +29,10 @@ PAYTYPE_IDS: Dict[str, List[str]] = {
     ],
     # Método Mercantil (Venezuela)
     "Mercantil": ["Mercantil", "Banco Mercantil"],
+    # Argentina: Bank Transfer (Argentina)
+    "Bank Transfer AR": ["Bank Transfer (Argentina)", "Bank Transfer", "Transferencia bancaria"],
+    # México: Transferencia bancaria
+    "Transferencia bancaria MX": ["Transferencia bancaria", "Bank Transfer"],
 }
 KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Zelle": ["zelle"],
@@ -38,40 +42,47 @@ KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Banco Pichincha": ["pichincha"],
     "Mercantil Bank Panama": ["mercantil bank panama", "mercantil bank panamá", "mercantil"],
     "Mercantil": ["mercantil", "banco mercantil"],
+    "Bank Transfer AR": ["bank transfer", "transferencia bancaria", "argentina"],
+    "Transferencia bancaria MX": ["transferencia bancaria", "bank transfer", "mexico", "méxico"],
 }
 
 # ------- Mercados -------
 BUY_CONFIGS = [
-    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",         "countries": ["VE"]},
-    {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",       "countries": ["CO"]},
-    {"label": "Argentina", "fiat": "ARS", "method": None,                "countries": ["AR"]},
-    {"label": "Perú",      "fiat": "PEN", "method": "Banco de Credito",  "countries": ["PE"]},
-    {"label": "Europa",    "fiat": "EUR", "method": "Bizum",             "countries": ["ES"]},
-    {"label": "USA",       "fiat": "USD", "method": "Zelle",             "countries": ["US"]},
-    {"label": "México",    "fiat": "MXN", "method": None,                "countries": ["MX"]},
-    {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama", "countries": ["PA"]},
-    {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",   "countries": ["EC"]},
-    {"label": "Chile",     "fiat": "CLP", "method": None,                "countries": ["CL"]},
+    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",                 "countries": ["VE"]},
+    {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",               "countries": ["CO"]},
+    # Argentina: GLOBAL (None) + Bank Transfer (Argentina)
+    {"label": "Argentina", "fiat": "ARS", "method": "Bank Transfer AR",         "countries": None},
+    {"label": "Perú",      "fiat": "PEN", "method": "Banco de Credito",         "countries": ["PE"]},
+    {"label": "Europa",    "fiat": "EUR", "method": "Bizum",                    "countries": ["ES"]},
+    {"label": "USA",       "fiat": "USD", "method": "Zelle",                    "countries": ["US"]},
+    # México: GLOBAL (None) + Transferencia bancaria
+    {"label": "México",    "fiat": "MXN", "method": "Transferencia bancaria MX","countries": None},
+    {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama",    "countries": ["PA"]},
+    {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",          "countries": ["EC"]},
+    {"label": "Chile",     "fiat": "CLP", "method": None,                       "countries": ["CL"]},
 ]
 SELL_CONFIGS = [
-    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",         "countries": ["VE"]},
-    {"label": "Argentina", "fiat": "ARS", "method": None,                "countries": ["AR"]},
-    {"label": "Brasil",    "fiat": "BRL", "method": None,                "countries": ["BR"]},
-    {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",       "countries": ["CO"]},
-    {"label": "Perú",      "fiat": "PEN", "method": "Banco de Credito",  "countries": ["PE"]},
-    {"label": "Europa",    "fiat": "EUR", "method": "Bizum",             "countries": ["ES"]},
-    {"label": "USA",       "fiat": "USD", "method": "Zelle",             "countries": ["US"]},
-    {"label": "México",    "fiat": "MXN", "method": None,                "countries": ["MX"]},
-    {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama", "countries": ["PA"]},
-    {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",   "countries": ["EC"]},
-    {"label": "Chile",     "fiat": "CLP", "method": None,                "countries": ["CL"]},
+    {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",                 "countries": ["VE"]},
+    # Argentina: GLOBAL (None) + Bank Transfer (Argentina)
+    {"label": "Argentina", "fiat": "ARS", "method": "Bank Transfer AR",         "countries": None},
+    {"label": "Brasil",    "fiat": "BRL", "method": None,                       "countries": ["BR"]},
+    {"label": "Colombia",  "fiat": "COP", "method": "Bancolombia",              "countries": ["CO"]},
+    {"label": "Perú",      "fiat": "PEN", "method": "Banco de Credito",         "countries": ["PE"]},
+    {"label": "Europa",    "fiat": "EUR", "method": "Bizum",                    "countries": ["ES"]},
+    {"label": "USA",       "fiat": "USD", "method": "Zelle",                    "countries": ["US"]},
+    # México: GLOBAL (None) + Transferencia bancaria
+    {"label": "México",    "fiat": "MXN", "method": "Transferencia bancaria MX","countries": None},
+    {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama",    "countries": ["PA"]},
+    {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",          "countries": ["EC"]},
+    {"label": "Chile",     "fiat": "CLP", "method": None,                       "countries": ["CL"]},
 ]
 
-# ------- Índice base por mercado (se usa solo para BUY; SELL toma siempre la #1) -------
+# ------- Índice base por mercado (BUY) -------
 BASE_INDEX_BY_MARKET: Dict[Tuple[str, str], int] = {
-    # ejemplo si quieres alguna compra con índice distinto (p.ej. Venezuela BUY = 10):
-    # ("Venezuela", "BUY"): 10,
-    # todo lo demás usa TOP_N = 5
+    ("Colombia", "BUY"): 10,  # ya lo tenías
+    ("Argentina", "BUY"): 10, # AR BUY → 10 ofertas
+    ("México",   "BUY"): 10,  # MX BUY → 10 ofertas
+    # otros mercados siguen con TOP_N = 5 por defecto
 }
 
 # ------- Márgenes -------
@@ -267,7 +278,7 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
     method_ids = PAYTYPE_IDS.get(method_label, [])
     url = page_url(fiat, side)
 
-    country_sets: List[Optional[List[str]]] = [None]
+    country_sets: List[Optional[List[str]]] = [None]  # GLOBAL primero
     if countries:
         country_sets.append(countries)
 
@@ -380,17 +391,16 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
                          method: Optional[str], countries: Optional[List[str]]) -> Optional[Dict[str, Any]]:
     side_u = side.upper()
 
-    # Regla pedida:
-    # - SELL: siempre mostrar 10 y guardar la #1 (la más barata)
-    # - BUY: conservar comportamiento previo (índice por mercado o TOP_N=5)
+    # SELL: siempre mostrar 10 y guardar la #1 (la más barata, ya ordenado asc)
     if side_u == "SELL":
         base_idx = 1
         need_n = 10
     else:
+        # BUY: por defecto TOP_N (=5), pero para CO/AR/MX queremos 10
         base_idx = BASE_INDEX_BY_MARKET.get((label, side_u), TOP_N)
         need_n = base_idx
 
-    # Captura
+    # Captura (si hay método, trae hasta need_n recorriendo páginas)
     if method:
         items = capture_method_topN_any_page(fiat, side_u, method, countries, need_n=need_n)
     else:
@@ -401,7 +411,17 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
     if not offers:
         return None
 
-    base = offers[base_idx - 1] if len(offers) >= base_idx else offers[-1]
+    # Selección de la base:
+    if side_u == "SELL":
+        # Ya está ordenado asc → #1 es la más barata
+        base = offers[0]
+    elif (label, side_u) in {("Colombia", "BUY"), ("Argentina", "BUY"), ("México", "BUY")}:
+        # Colombia/Argentina/México BUY: tomar la de MAYOR precio dentro de las 10 capturadas
+        base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
+    else:
+        # Resto BUY: mantener índice base (TOP_N por defecto)
+        base = offers[base_idx - 1] if len(offers) >= base_idx else offers[-1]
+
     precio_base = base["price"]
     vendedor = base["seller"]
     metodos = base["methods"]
@@ -457,7 +477,7 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
             print(f"✅ Tasas {base} actualizadas.")
 
 def main():
-    print("\n🔁 Ejecutando actualización (UI → 10 en SELL guarda #1; BUY mantiene índice; method=multi-página con parches CLP)…")
+    print("\n🔁 Ejecutando actualización (SELL=10 guarda #1; BUY: CO/AR/MX=10 y toma mayor; parches CLP; métodos AR/MX global)…")
 
     precios_buy: Dict[str, Dict[str, Any]] = {}
     precios_sell: Dict[str, Dict[str, Any]] = {}
@@ -468,7 +488,7 @@ def main():
         if res:
             precios_buy[cfg["label"]] = res
 
-    # SELL (incluye Brasil) — ahora todos guardan la #1 (más barata)
+    # SELL (incluye Brasil) — todos guardan la #1 (más barata) y muestran 10
     for cfg in SELL_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "SELL", cfg.get("method"), cfg.get("countries"))
         if res:
