@@ -1,126 +1,54 @@
-# cron_worker.py
-import os, sys, time, signal, subprocess, traceback
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta
+import pytz
 
-def log(msg):
-    print(msg, flush=True)
+# ... lo que ya tienes arriba ...
 
-# --- Playwright bootstrap: instala Chromium si falta ---
-def ensure_playwright_chromium():
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/.cache/ms-playwright")
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:
-        log("❌ Playwright no está instalado (revisa requirements.txt).")
-        return
-    try:
-        with sync_playwright() as p:
-            b = p.chromium.launch(headless=True)
-            b.close()
-        log("✅ Chromium disponible.")
-        return
-    except Exception as e:
-        log(f"ℹ️ Chromium no disponible aún: {e}")
+TICK_MINUTES = 15  # ← cada 15 minutos
 
-    log("⬇️ Instalando navegadores de Playwright (chromium)…")
-    try:
-        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
-        proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
-        log(proc.stdout or "")
-        if proc.returncode != 0:
-            log(f"⚠️ 'playwright install chromium' terminó con código {proc.returncode}. STDERR:\n{proc.stderr}")
-        else:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                b = p.chromium.launch(headless=True)
-                b.close()
-            log("✅ Chromium instalado y verificado.")
-    except Exception:
-        log("❌ Error instalando Chromium:")
-        log(traceback.format_exc())
+def local_now(tzname="America/Caracas"):
+    tz = pytz.timezone(tzname)
+    # si aún usas utcnow + astimezone, mantenlo; esto es equivalente claro:
+    return datetime.now(tz)
 
-log(f"🚀 cron_worker arrancando | Python: {sys.version}")
-try:
-    log(f"📂 CWD: {os.getcwd()}")
-    try:
-        log(f"📄 Files: {os.listdir('.')}")
-    except Exception as _e:
-        log(f"⚠️ No pude listar archivos: {_e}")
+def in_window(dt):
+    # Mantén tu ventana (9–21); ajusta si ya tienes otra función similar
+    return 9 <= dt.hour <= 21
 
-    TZ = os.getenv("TZ", "America/Caracas")
-    os.environ["TZ"] = TZ
-    try:
-        import pytz
-        tz = pytz.timezone(TZ)
-        log(f"🕒 Zona horaria: {TZ}")
-    except Exception:
-        log("❌ Error importando pytz:")
-        log(traceback.format_exc())
-        raise
+def is_tick(dt):
+    # Dispara a los :00, :15, :30, :45 en segundo 0
+    return (dt.minute % TICK_MINUTES == 0) and (dt.second == 0)
 
-    # Asegura Playwright antes de usarlo en guardar_tasas
-    ensure_playwright_chromium()
+def seconds_until_next_tick(dt):
+    # Calcula cuántos segundos faltan para el próximo múltiplo de 15
+    base = dt.replace(second=0, microsecond=0)
+    next_min = ((dt.minute // TICK_MINUTES) + 1) * TICK_MINUTES
+    if next_min >= 60:
+        nxt = base.replace(minute=0) + timedelta(hours=1)
+    else:
+        nxt = base.replace(minute=next_min)
+    return max(1, int((nxt - dt).total_seconds()))
 
-    try:
-        from guardar_tasas import actualizar_todas_las_tasas
-    except Exception:
-        log("❌ Error importando guardar_todas_las_tasas:")
-        log(traceback.format_exc())
-        raise
+if __name__ == "__main__":
+    print("⏱️ Cron activo. Ventana: 9:00–21:00 America/Caracas | intervalo=15min")
+    while True:
+        now = local_now("America/Caracas")
 
-    RUN_START = int(os.getenv("RUN_START", "9"))     # 09:00 VET
-    RUN_END   = int(os.getenv("RUN_END",   "21"))    # 21:00 VET
-    FORCE_RUN = os.getenv("CRON_FORCE_RUN", "0") == "1"
+        if not in_window(now):
+            # Fuera de ventana: duerme 60s y reintenta
+            time.sleep(60)
+            continue
 
-    # >>> CORRECCIÓN AQUÍ: usar global, no nonlocal <<<
-    stop = False
-    def _stop(sig, frm):
-        global stop
-        stop = True
-        log(f"🛑 Señal recibida: {sig}")
-
-    signal.signal(signal.SIGTERM, _stop)
-    signal.signal(signal.SIGINT, _stop)
-
-    def now_vet():
-        return datetime.now(timezone.utc).astimezone(tz)
-
-    def should_run(dt):
-        return RUN_START <= dt.hour <= RUN_END and dt.minute == 0
-
-    last_run_key = None
-    log(f"⏱️ Cron activo. Ventana: {RUN_START}:00–{RUN_END}:00 {TZ} | FORCE_RUN={FORCE_RUN}")
-
-    if FORCE_RUN:
-        try:
-            log("🔄 FORCE_RUN=1 → ejecutando actualización inicial…")
-            actualizar_todas_las_tasas()
-            log("✅ Actualización inicial OK.")
-        except Exception:
-            log("❌ Error en actualización inicial:")
-            log(traceback.format_exc())
-
-    while not stop:
-        try:
-            dt = now_vet()
-            key = (dt.date(), dt.hour)
-            if should_run(dt) and key != last_run_key:
-                log(f"🔄 Ejecutando actualización {dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        if FORCE_RUN or is_tick(now):
+            try:
+                print(f"🔄 Ejecutando actualización {now.isoformat()}")
                 actualizar_todas_las_tasas()
-                log("✅ Tasas actualizadas.")
-                last_run_key = key
-            else:
-                if dt.minute % 5 == 0 and dt.second == 0:
-                    log(f"💤 Esperando hora exacta… ahora {dt.strftime('%H:%M:%S')}")
-        except Exception:
-            log("❌ Error en bucle principal:")
-            log(traceback.format_exc())
-        time.sleep(1)
-
-    log("👋 Saliendo con gracia.")
-except SystemExit:
-    raise
-except Exception:
-    log("💥 Excepción fatal al iniciar cron_worker:")
-    log(traceback.format_exc())
-    sys.exit(1)
+            except Exception as e:
+                print(f"❌ Error en bucle principal: {e}")
+            finally:
+                FORCE_RUN = False
+                # Evita doble disparo en el mismo segundo
+                time.sleep(2)
+        else:
+            # Duerme hasta el próximo cuarto de hora (máx 30s para logs más “vivos” si prefieres)
+            time.sleep(min(30, seconds_until_next_tick(now)))
