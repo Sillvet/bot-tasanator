@@ -2,6 +2,30 @@ import os
 import time
 from datetime import datetime, timedelta
 import pytz
+import subprocess, sys
+
+def ensure_playwright_browsers():
+    # Verifica que el CLI existe y descarga chromium si hace falta (sin --with-deps)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "--version"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+    except Exception as e:
+        print(f"⚠️ playwright CLI no disponible: {e}")
+        # Último intento simple (sin --with-deps)
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True
+        )
+
+ensure_playwright_browsers()
+
+from guardar_tasas import actualizar_todas_las_tasas
 
 try:
     from guardar_tasas import actualizar_todas_las_tasas
