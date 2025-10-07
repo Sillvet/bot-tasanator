@@ -103,6 +103,17 @@ margenes_personalizados = {
     "Europa - Ecuador": {"publico": 0.10, "mayorista": 0.05},
     "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
+
+# === Ajustes solicitados de márgenes (sin cambiar nada más) ===
+# Zelle → Chile (USA - Chile): Mayorista 10%, Público 7%
+margenes_personalizados["USA - Chile"] = {"publico": 0.07, "mayorista": 0.10}
+# Colombia → Chile: Público 7%, Mayorista 4%
+margenes_personalizados["Colombia - Chile"] = {"publico": 0.07, "mayorista": 0.04}
+# México → Venezuela: Público 10%, Mayorista 7% (reemplaza valor previo)
+margenes_personalizados["México - Venezuela"] = {"publico": 0.10, "mayorista": 0.07}
+# Argentina → Perú: Público 7%, Mayorista 4%
+margenes_personalizados["Argentina - Perú"] = {"publico": 0.07, "mayorista": 0.04}
+
 pares_sumar_margen = {"Chile - USA", "Colombia - Venezuela"}
 
 def margen_por_defecto(base: str) -> Dict[str, float]:
