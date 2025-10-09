@@ -79,7 +79,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print("❌ Faltan SUPABASE_URL o SUPABASE_KEY en tu .env.")
     sys.exit(1)
 
-# === 6) PARSEO DE AUTORIZADOS ===
+# === 6) PARSEO DE AUTORIZADOS / RESTRINGIDOS ===
 def _parse_ids(raw: str):
     out = []
     for x in (raw or "").split(","):
@@ -92,9 +92,21 @@ def _parse_ids(raw: str):
             print(f"⚠️ ID inválido en USUARIOS_AUTORIZADOS: {x!r}")
     return out
 
+def _parse_id_set(raw: str):
+    # acepta: "123", "123,456", " 123  ,  456 \n789 "
+    out = set()
+    for x in re.split(r"[,\s]+", (raw or "").strip()):
+        if not x:
+            continue
+        try:
+            out.add(int(x))
+        except Exception:
+            print(f"⚠️ ID inválido en lista: {x!r}")
+    return out
+
 USUARIOS_AUTORIZADOS = _parse_ids(os.getenv("USUARIOS_AUTORIZADOS", ""))
-USUARIO_LIMITADO = int(os.getenv("USUARIO_LIMITADO", "794327412") or 0)
-USUARIO_RESTRINGIDO = int(os.getenv("USUARIO_RESTRINGIDO", "7278912173") or 0)
+USUARIOS_LIMITADOS = _parse_id_set(os.getenv("USUARIO_LIMITADO", "794327412"))
+USUARIOS_RESTRINGIDOS = _parse_id_set(os.getenv("USUARIO_RESTRINGIDO", "7278912173"))
 
 # === 7) CLIENTES ===
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -192,7 +204,8 @@ def obtener_tasas_par(nombre_par, user_id):
         tasa_pub_prom, _ = buscar_valor(f"Tasa público promedio {nombre_par}")
         tasa_may_actual, _ = buscar_valor(f"Tasa mayorista {nombre_par}")
         tasa_may_prom, _ = buscar_valor(f"Tasa mayorista promedio {nombre_par}")
-        if user_id in (USUARIO_LIMITADO, USUARIO_RESTRINGIDO):
+        # ---- Restricción por usuario (IDs múltiples) ----
+        if (user_id in USUARIOS_LIMITADOS) or (user_id in USUARIOS_RESTRINGIDOS):
             if tasa_pub_actual is None or tasa_may_actual is None:
                 return "❌ No hay datos disponibles para ese par."
             return (
@@ -203,6 +216,7 @@ def obtener_tasas_par(nombre_par, user_id):
                 f"Tasa Público Promedio: {tasa_pub_prom if tasa_pub_prom is not None else 'No disponible'}\n\n"
                 f"🕒 Última actualización de datos: {hora_actual}"
             )
+        # ---- Usuarios sin restricción ----
         if tasa_full_actual is None or tasa_pub_actual is None or tasa_may_actual is None:
             return "❌ No hay datos suficientes disponibles para ese par."
         return (
