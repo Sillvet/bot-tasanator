@@ -34,11 +34,15 @@ except Exception as e:
     raise
 
 # === Config desde entorno ===
-TZ_NAME = os.getenv("TZ_NAME", "America/Caracas")
-CRON_INTERVAL_MIN = int(os.getenv("CRON_INTERVAL_MIN", "15"))  # default 15
+# Lee TZ desde 'TZ' (Render) o 'TZ_NAME' (fallback)
+TZ_NAME = os.getenv("TZ") or os.getenv("TZ_NAME", "America/Caracas")
+
+# DEFAULT ahora 60 min (si CRON_INTERVAL_MIN no está en ENV, corre cada 1 hora)
+CRON_INTERVAL_MIN = int(os.getenv("CRON_INTERVAL_MIN", "60"))
+
 FORCE_RUN = os.getenv("FORCE_RUN", "").strip().lower() in ("1", "true", "yes", "on")
 
-# ⬇️ NUEVO: ventana configurable + modo siempre activo
+# Ventana configurable + modo siempre activo
 WINDOW_START_HOUR = int(os.getenv("WINDOW_START_HOUR", "9"))
 WINDOW_END_HOUR   = int(os.getenv("WINDOW_END_HOUR", "21"))   # inclusive
 ALWAYS_ON = os.getenv("ALWAYS_ON", "").strip().lower() in ("1","true","yes","on")
@@ -50,7 +54,7 @@ def local_now(tzname=TZ_NAME):
     return datetime.now(tz)
 
 def in_window(dt):
-    # Si activas ALWAYS_ON, ignoramos la ventana (para pruebas nocturnas)
+    # Si activas ALWAYS_ON, ignoramos la ventana (para correr 24/7)
     if ALWAYS_ON:
         return True
     return WINDOW_START_HOUR <= dt.hour <= WINDOW_END_HOUR  # inclusive
@@ -63,7 +67,7 @@ def align_to_next_tick(dt):
         candidate = (base.replace(minute=0) + timedelta(hours=1))
     else:
         candidate = base.replace(minute=next_min)
-    # si estamos usando ventana y cae fuera, muévelo a la apertura siguiente
+    # si usamos ventana y cae fuera, muévelo a la apertura siguiente
     if not ALWAYS_ON:
         if candidate.hour < WINDOW_START_HOUR:
             candidate = candidate.replace(hour=WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
