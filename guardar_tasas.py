@@ -105,7 +105,7 @@ margenes_personalizados = {
 }
 
 # === Ajustes solicitados de márgenes (sin cambiar nada más) ===
-# Zelle → Chile (USA - Chile): Mayorista 10%, Público 7%
+# Zelle → Chile (USA - Chile): Mayorista 10%, Público 7%  (ANTERIOR; quedará sobrescrito por el patch nuevo)
 margenes_personalizados["USA - Chile"] = {"publico": 0.07, "mayorista": 0.10}
 # Colombia → Chile: Público 7%, Mayorista 4%
 margenes_personalizados["Colombia - Chile"] = {"publico": 0.07, "mayorista": 0.04}
@@ -119,7 +119,7 @@ pares_sumar_margen = {"Chile - USA", "Colombia - Venezuela"}
 def margen_por_defecto(base: str) -> Dict[str, float]:
     if base.startswith("México - "):
         return {"publico": 0.07, "mayorista": 0.10}
-    return {"publico": 0.07, "mayorista": 0.03}
+    return {"publico": 0.07, "mayorista": 0.045}
 
 # ------- Decimales dinámicos -------
 def decimales_auto(t: float, origen: str, destino: str) -> int:
@@ -620,6 +620,34 @@ def main():
 # --- compatibilidad para el bot ---
 def actualizar_todas_las_tasas():
     return main()
+
+# =========================
+# === PATCH DE MÁRGENES ===
+# (Se aplica al final para sobrescribir cualquier valor previo
+#  SOLO en los pares pedidos; lo demás queda igual)
+margenes_personalizados.update({
+    # Zelle = USA -> destino
+    "USA - Chile":     {"publico": 0.10, "mayorista": 0.07},
+    "USA - Colombia":  {"publico": 0.10, "mayorista": 0.07},
+    "USA - Argentina": {"publico": 0.10, "mayorista": 0.07},
+    "USA - Venezuela": {"publico": 0.10, "mayorista": 0.07},
+
+    # Direcciones específicas indicadas
+    "Argentina - Chile":     {"publico": 0.07, "mayorista": 0.04},
+    "Venezuela - Argentina": {"publico": 0.07, "mayorista": 0.04},
+    "Venezuela - USA":       {"publico": 0.07, "mayorista": 0.04},  # "Venezuela Zelle"
+    "Venezuela - Chile":     {"publico": 0.07, "mayorista": 0.04},
+    "Venezuela - Perú":      {"publico": 0.07, "mayorista": 0.04},
+    "Venezuela - Colombia":  {"publico": 0.07, "mayorista": 0.04},
+
+    "Colombia - Perú":   {"publico": 0.07, "mayorista": 0.04},
+    "Colombia - México": {"publico": 0.07, "mayorista": 0.04},
+
+    # México especificados
+    "México - Argentina": {"publico": 0.10, "mayorista": 0.07},
+    "México - Colombia":  {"publico": 0.10, "mayorista": 0.07},
+})
+# =========================
 
 if __name__ == "__main__":
     main()
