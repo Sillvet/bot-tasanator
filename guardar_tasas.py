@@ -25,9 +25,11 @@ PAYTYPE_IDS: Dict[str, List[str]] = {
     "Mercantil Bank Panama": [
         "MercantilBankPanama", "Mercantil Bank Panama", "Mercantil Bank Panamá", "Mercantil"
     ],
-    # Argentina / México (se mantienen como estaban)
+    # Argentina / México
     "Bank Transfer AR": ["Bank Transfer (Argentina)", "Bank Transfer", "Transferencia bancaria"],
     "Transferencia bancaria MX": ["Transferencia bancaria", "Bank Transfer"],
+    # Uruguay
+    "Itau Uruguay": ["Itau", "Itaú", "Banco Itaú", "Itaú Uruguay", "Itau Uruguay"],
 }
 KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Zelle": ["zelle"],
@@ -39,6 +41,7 @@ KEYWORDS_BY_METHOD: Dict[str, List[str]] = {
     "Mercantil": ["mercantil", "banco mercantil"],
     "Bank Transfer AR": ["bank transfer", "transferencia bancaria", "argentina"],
     "Transferencia bancaria MX": ["transferencia bancaria", "bank transfer", "mexico", "méxico"],
+    "Itau Uruguay": ["itau", "itaú", "banco itaú", "itaú uruguay", "itau uruguay"],
 }
 
 # ------- Mercados -------
@@ -53,6 +56,7 @@ BUY_CONFIGS = [
     {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama",     "countries": ["PA"]},
     {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",           "countries": ["EC"]},
     {"label": "Chile",     "fiat": "CLP", "method": None,                        "countries": ["CL"]},
+    {"label": "Uruguay",   "fiat": "UYU", "method": "Itau Uruguay",              "countries": ["UY"]},
 ]
 SELL_CONFIGS = [
     {"label": "Venezuela", "fiat": "VES", "method": "Mercantil",                 "countries": ["VE"]},
@@ -66,6 +70,7 @@ SELL_CONFIGS = [
     {"label": "Panamá",    "fiat": "USD", "method": "Mercantil Bank Panama",     "countries": ["PA"]},
     {"label": "Ecuador",   "fiat": "USD", "method": "Banco Pichincha",           "countries": ["EC"]},
     {"label": "Chile",     "fiat": "CLP", "method": None,                        "countries": ["CL"]},
+    {"label": "Uruguay",   "fiat": "UYU", "method": "Itau Uruguay",              "countries": ["UY"]},
 ]
 
 # ------- Índice base por mercado (BUY) -------
@@ -91,7 +96,7 @@ margenes_personalizados = {
     "Colombia - Venezuela": {"publico": 0.06, "mayorista": 0.04},
     "Argentina - Venezuela": {"publico": 0.07, "mayorista": 0.04},
     "México - Venezuela": {"publico": 0.07, "mayorista": 0.10},
-    "USA - Venezuela": {"publico": 0.10, "mayorista": 0.06},
+    "USA - Venezuela": {"publico": 0.10, "mayorista": 0.06},  # (no afecta base "X - USA")
     "Perú - Venezuela": {"publico": 0.07, "mayorista": 0.04},
     "Brasil - Venezuela": {"publico": 0.10, "mayorista": 0.05},
     "Europa - Venezuela": {"publico": 0.10, "mayorista": 0.05},
@@ -104,21 +109,27 @@ margenes_personalizados = {
     "Colombia - Ecuador": {"publico": 0.07, "mayorista": 0.04},
 }
 
-# === Ajustes solicitados de márgenes (sin cambiar nada más) ===
-# Zelle → Chile (USA - Chile): Mayorista 10%, Público 7%  (ANTERIOR; quedará sobrescrito por el patch nuevo)
-margenes_personalizados["USA - Chile"] = {"publico": 0.07, "mayorista": 0.10}
-# Colombia → Chile: Público 7%, Mayorista 4%
+# Ajustes existentes
+margenes_personalizados["USA - Chile"] = {"publico": 0.07, "mayorista": 0.10}   # (no afecta base "Chile - USA")
 margenes_personalizados["Colombia - Chile"] = {"publico": 0.07, "mayorista": 0.04}
-# México → Venezuela: Público 10%, Mayorista 7% (reemplaza valor previo)
 margenes_personalizados["México - Venezuela"] = {"publico": 0.10, "mayorista": 0.07}
-# Argentina → Perú: Público 7%, Mayorista 4%
 margenes_personalizados["Argentina - Perú"] = {"publico": 0.07, "mayorista": 0.04}
+
+# ✅ FIX solicitado: Zelle PEN y Zelle ARS (pares con destino USA)
+#    El cálculo usa base "Origen - USA", por eso agregamos:
+margenes_personalizados["Perú - USA"] = {"publico": 0.10, "mayorista": 0.07}
+margenes_personalizados["Argentina - USA"] = {"publico": 0.10, "mayorista": 0.07}
 
 pares_sumar_margen = {"Chile - USA", "Colombia - Venezuela"}
 
 def margen_por_defecto(base: str) -> Dict[str, float]:
+    # Uruguay por defecto: 7% público, 4% mayorista
+    if base.startswith("Uruguay - ") or base.endswith(" - Uruguay"):
+        return {"publico": 0.07, "mayorista": 0.04}
+    # México por defecto
     if base.startswith("México - "):
         return {"publico": 0.07, "mayorista": 0.10}
+    # Genérico
     return {"publico": 0.07, "mayorista": 0.045}
 
 # ------- Decimales dinámicos -------
@@ -210,15 +221,10 @@ def _sort_items_by_price_asc(items: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 # ------- Merchant helpers (verificados + únicos) -------
 def _is_verified_merchant(advertiser: Dict[str, Any]) -> bool:
-    """
-    Heurística segura: ya filtramos publisherType='merchant'.
-    Exigimos además alguna señal de verificación/KYC sin romper si faltan campos.
-    """
     if not advertiser:
         return False
     if str(advertiser.get("userType", "")).lower() != "merchant":
         return False
-
     flags = [
         advertiser.get("isMerchantCertified"),
         advertiser.get("isUserCertified"),
@@ -229,7 +235,6 @@ def _is_verified_merchant(advertiser: Dict[str, Any]) -> bool:
     ]
     grades = str(advertiser.get("userGrade", "")).lower()
     kyc = str(advertiser.get("userKycType", "")).lower()
-
     if any(bool(f) for f in flags):
         return True
     if grades in ("verified", "merchant", "gold", "pro"):
@@ -254,7 +259,6 @@ def _unique_verified_merchants(items: List[Dict[str, Any]], max_n: int) -> List[
             break
     return out
 
-# === Filtro "Solo anuncios comerciables"
 def _filter_tradable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = []
     for it in items or []:
@@ -270,11 +274,6 @@ def _filter_tradable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def fetch_ui_page(page, fiat: str, side: str, countries: Optional[List[str]],
                   pay_types: Optional[List[str]], page_no: int,
                   publisher_type: Optional[str] = None):
-    """
-    publisher_type:
-      - None → sin filtro
-      - "merchant" → Solo anuncios de comerciantes
-    """
     api = f"{BASE}/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
         "page": page_no,
@@ -307,7 +306,6 @@ def capture_first_page(fiat: str, side: str, countries: Optional[List[str]]) -> 
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
 
-        # Forzar merchants (publisherType="merchant")
         def _try(cset):
             return fetch_ui_page(pg, fiat, side, cset, None, 1, publisher_type="merchant")
 
@@ -322,7 +320,6 @@ def capture_first_page(fiat: str, side: str, countries: Optional[List[str]]) -> 
 
         browser.close()
 
-    # Solo comerciables + verificados únicos
     items = _filter_tradable(items)
     items = _unique_verified_merchants(items, max_n=50)
 
@@ -370,7 +367,6 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
                                  countries: Optional[List[str]], need_n: int = TOP_N) -> List[Dict[str, Any]]:
     method_ids = PAYTYPE_IDS.get(method_label, [])
     url = page_url(fiat, side)
-
     country_sets: List[Optional[List[str]]] = [None]
     if countries:
         country_sets.append(countries)
@@ -384,7 +380,6 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
 
-        # 1) Con payTypes (publisherType="merchant")
         for cset in country_sets:
             for page_no in range(1, MAX_PAGES_METHOD + 1):
                 arr = fetch_ui_page(pg, fiat, side, cset, method_ids, page_no, publisher_type="merchant")
@@ -403,7 +398,6 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
             if len(collected) >= need_n:
                 break
 
-        # 2) Fallback sin payTypes + filtro local (merchant + comerciables)
         if len(collected) < need_n:
             for cset in country_sets:
                 for page_no in range(1, MAX_PAGES_METHOD + 1):
@@ -488,7 +482,6 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
                          method: Optional[str], countries: Optional[List[str]]) -> Optional[Dict[str, Any]]:
     side_u = side.upper()
 
-    # SELL: siempre mostrar 10 y guardar la #1 (la más barata, ya ordenado asc)
     if side_u == "SELL":
         base_idx = 1
         need_n = 10
@@ -496,7 +489,6 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
         base_idx = BASE_INDEX_BY_MARKET.get((label, side_u), TOP_N)
         need_n = base_idx
 
-    # Caso especial: USD + Zelle (ambos lados)
     if method == "Zelle" and fiat == "USD":
         items = capture_method_page_exact(
             fiat=f"{fiat}",
@@ -504,12 +496,11 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
             method_label="Zelle",
             page_no=1,
             need_n=10,
-            countries=None,          # GLOBAL
-            merchant_only=True,      # Solo comerciantes (se fuerza igual adentro)
-            dedupe_verified=True     # Verificados + sin repetidos
+            countries=None,
+            merchant_only=True,
+            dedupe_verified=True
         )
     else:
-        # Comportamiento por defecto
         if method:
             items = capture_method_topN_any_page(fiat, side_u, method, countries, need_n=need_n)
         else:
@@ -520,15 +511,14 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
     if not offers:
         return None
 
-    # Selección base:
     if method == "Zelle" and fiat == "USD":
         if side_u == "SELL":
             base = min(offers, key=lambda o: (o["price"] if o["price"] is not None else float("inf")))
-        else:  # BUY
+        else:
             base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
     else:
         if side_u == "SELL":
-            base = offers[0]  # ya ordenado ascendente
+            base = offers[0]
         elif (label, side_u) in {("Colombia", "BUY"), ("Argentina", "BUY"), ("México", "BUY")}:
             base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
         else:
@@ -545,6 +535,27 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
     nombre = f"USDT en {label}" + (" (venta)" if side_u == "SELL" else "")
     guardar_tasa(nombre, precio_base)
 
+    # === Par único COP USDT ===
+    if label == "Colombia" and side_u == "BUY":
+        try:
+            dec = 2
+            full_cop_usdt = float(precio_base)
+            may_cop_usdt  = full_cop_usdt * 1.07
+
+            guardar_tasa("Tasa full COP USDT", full_cop_usdt, dec)
+            guardar_tasa("Tasa mayorista COP USDT", may_cop_usdt, dec)
+
+            pf = promedio_tasa("Tasa full COP USDT")
+            pm = promedio_tasa("Tasa mayorista COP USDT")
+            if pf is not None:
+                guardar_tasa("Tasa full promedio COP USDT", pf, dec)
+            if pm is not None:
+                guardar_tasa("Tasa mayorista promedio COP USDT", pm, dec)
+
+            print("✅ Par único COP USDT actualizado (full y mayorista).")
+        except Exception as e:
+            print(f"⚠️ No se pudo actualizar 'COP USDT': {e}")
+
     return {"price": float(precio_base), "seller": vendedor, "methods": metodos, "fiat": fiat}
 
 def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
@@ -557,16 +568,14 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
             p_origen = odata["price"]
             p_dest   = ddata["price"]
 
-            # ===== REGLA USA (destino Zelle) =====
-            # Siempre invertida y con márgenes por RESTA + 6 decimales.
             if destino == "USA":
-                tasa_full = p_dest / p_origen        # inversa para que sea ~0.0009xx
+                # Regla USA: inversa + márgenes por resta
+                tasa_full = p_dest / p_origen
                 decimales = 6
                 margen = margenes_personalizados.get(base, margen_por_defecto(base))
                 tasa_publico   = tasa_full * (1 - margen["publico"])
                 tasa_mayorista = tasa_full * (1 - margen["mayorista"])
             else:
-                # lógica previa intacta
                 if base in pares_sumar_margen:
                     tasa_full = p_origen / p_dest
                 else:
@@ -597,18 +606,15 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
             print(f"✅ Tasas {base} actualizadas.")
 
 def main():
-    print("\n🔁 Ejecutando actualización (SELL=10 guarda #1; BUY: CO/AR/MX=10 y toma mayor; Zelle/USD=merchant-only verificados únicos p1; filtros Comerciables y Verificados; destino USA invertida 6 decimales con márgenes por resta)…")
-
+    print("\n🔁 Ejecutando actualización…")
     precios_buy: Dict[str, Dict[str, Any]] = {}
     precios_sell: Dict[str, Dict[str, Any]] = {}
 
-    # BUY (sin Brasil)
     for cfg in BUY_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "BUY", cfg.get("method"), cfg.get("countries"))
         if res:
             precios_buy[cfg["label"]] = res
 
-    # SELL (incluye Brasil)
     for cfg in SELL_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "SELL", cfg.get("method"), cfg.get("countries"))
         if res:
@@ -617,37 +623,33 @@ def main():
     calcular_pares(precios_buy, precios_sell)
     print("\n✅ Proceso finalizado.")
 
-# --- compatibilidad para el bot ---
 def actualizar_todas_las_tasas():
     return main()
 
-# =========================
-# === PATCH DE MÁRGENES ===
-# (Se aplica al final para sobrescribir cualquier valor previo
-#  SOLO en los pares pedidos; lo demás queda igual)
+# --- Patch de márgenes al final (se mantiene) ---
 margenes_personalizados.update({
-    # Zelle = USA -> destino
+    # (Estas claves "USA - X" no afectan el cálculo base "X - USA", pero las dejamos por compat.)
     "USA - Chile":     {"publico": 0.10, "mayorista": 0.07},
     "USA - Colombia":  {"publico": 0.10, "mayorista": 0.07},
     "USA - Argentina": {"publico": 0.10, "mayorista": 0.07},
     "USA - Venezuela": {"publico": 0.10, "mayorista": 0.07},
 
-    # Direcciones específicas indicadas
+    # Direcciones específicas (sí afectan base) — se refuerzan aquí también
     "Argentina - Chile":     {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - Argentina": {"publico": 0.07, "mayorista": 0.04},
-    "Venezuela - USA":       {"publico": 0.07, "mayorista": 0.04},  # "Venezuela Zelle"
+    "Venezuela - USA":       {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - Chile":     {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - Perú":      {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - Colombia":  {"publico": 0.07, "mayorista": 0.04},
+    "Colombia - Perú":       {"publico": 0.07, "mayorista": 0.04},
+    "Colombia - México":     {"publico": 0.07, "mayorista": 0.04},
+    "México - Argentina":    {"publico": 0.10, "mayorista": 0.07},
+    "México - Colombia":     {"publico": 0.10, "mayorista": 0.07},
 
-    "Colombia - Perú":   {"publico": 0.07, "mayorista": 0.04},
-    "Colombia - México": {"publico": 0.07, "mayorista": 0.04},
-
-    # México especificados
-    "México - Argentina": {"publico": 0.10, "mayorista": 0.07},
-    "México - Colombia":  {"publico": 0.10, "mayorista": 0.07},
+    # ✅ Reforzamos aquí también los FIX pedidos:
+    "Perú - USA":       {"publico": 0.10, "mayorista": 0.07},
+    "Argentina - USA":  {"publico": 0.10, "mayorista": 0.07},
 })
-# =========================
 
 if __name__ == "__main__":
     main()
