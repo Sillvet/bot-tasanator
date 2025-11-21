@@ -8,6 +8,8 @@ import re
 import requests
 import telebot
 from dotenv import load_dotenv
+from decimal import Decimal, ROUND_DOWN
+import unicodedata
 
 # === 1) CARGA .ENV ANTES DE TODO ===
 load_dotenv(override=True)
@@ -137,7 +139,118 @@ safe_remove_webhook(bot)
 print(f"Conectado a: {SUPABASE_URL}")
 print("USUARIOS_AUTORIZADOS =", USUARIOS_AUTORIZADOS)
 
-# === EMOJIS Y PAISES DEL MENÚ ===
+# ============ NORMALIZADORES + DECIMALES POR PAR (TRUNCADO) ============
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+def _norm_pair(p: str) -> str:
+    """
+    Normaliza pares a: 'origen - destino' en minúsculas, sin acentos,
+    y con sinónimos: zelle->usa, euros->europa, panama->panamá, peru->perú, mexico->méxico, argentin->argentina.
+    También acepta 'origen destino' o 'origen- destino' etc.
+    """
+    if not p:
+        return ""
+    s = p.strip().lower()
+    s = s.replace("/", " ").replace("  ", " ")
+    # uniformar separador
+    if " - " in s:
+        partes = s.split(" - ")
+    else:
+        partes = s.split("-")
+    if len(partes) == 2:
+        a, b = partes[0].strip(), partes[1].strip()
+    else:
+        # también soporta "origen destino" sin guion
+        toks = s.split()
+        if len(toks) >= 2:
+            a, b = " ".join(toks[:-1]), toks[-1]
+        else:
+            a, b = s, ""
+
+    def std(word: str) -> str:
+        w = word.strip()
+        w = w.replace("euros", "europa")
+        w = w.replace("zelle", "usa")
+        w = w.replace("panama", "panamá")
+        w = w.replace("peru", "perú")
+        w = w.replace("mexico", "méxico")
+        w = w.replace("argentin", "argentina")
+        return w
+
+    a, b = std(a), std(b)
+    # quitar acentos para la clave del mapa
+    a_key = _strip_accents(a)
+    b_key = _strip_accents(b)
+    return f"{a_key} - {b_key}".strip()
+
+# Mapa de decimales por par normalizado (SIN ACENTOS, minúsculas)
+DECIMALS_BY_PAIR = {
+    "chile - venezuela": 4,
+    "chile - colombia": 3,
+    "chile - argentina": 3,
+    "chile - usa": 5,
+    "colombia - venezuela": 2,
+    "colombia - chile": 3,
+    "usa - venezuela": 1,
+    "usa - chile": 1,
+    "mexico - venezuela": 2,
+    "chile - mexico": 4,
+    "chile - peru": 4,
+    "argentina - peru": 4,
+    "argentina - venezuela": 3,
+    "colombia - argentina": 3,
+    "venezuela - colombia": 2,
+    "venezuela - argentina": 2,
+    "venezuela - usa": 5,
+    "usa - colombia": 2,
+    "venezuela - peru": 4,
+    "mexico - colombia": 1,
+    "mexico - argentina": 2,
+    "colombia - mexico": 3,
+    "argentina - chile": 3,
+    "colombia - peru": 5,
+    "panama - venezuela": 1,
+    "argentina - colombia": 2,
+    "ecuador - colombia": 1,
+    "ecuador - venezuela": 1,
+    "europa - venezuela": 1,
+    "europa - chile": 1,
+    "usa - peru": 3,
+    "usa - argentina": 3,
+    "uruguay - venezuela": 3,
+    "chile - panama": 5,
+    "chile - ecuador": 5,
+    # especial sin guion:
+    "colombia usdt": 2,
+}
+
+def _truncate_value(val, decs):
+    """
+    Trunca sin redondeo a 'decs' decimales usando Decimal + ROUND_DOWN.
+    Devuelve float (y lo formateamos como string con f-string para mantener decs).
+    """
+    if val is None:
+        return None
+    if decs is None:
+        return float(val)
+    q = Decimal("1." + ("0" * int(decs)))
+    d = Decimal(str(val)).quantize(q, rounding=ROUND_DOWN)
+    return float(d)
+
+def _fmt_trunc(val, decs):
+    """
+    Devuelve string del valor truncado con exactamente 'decs' decimales.
+    Si val es None -> 'No disponible'
+    """
+    if val is None:
+        return "No disponible"
+    if decs is None:
+        return str(val)
+    tv = _truncate_value(val, decs)
+    return f"{tv:.{decs}f}"
+
+# ============ EMOJIS Y PAISES DEL MENÚ ============
 emojis_paises = {
     "venezuela": "🇻🇪",
     "colombia": "🇨🇴",
@@ -158,7 +271,7 @@ SPECIAL_COPUSDT_BTN = "💱 COP USDT"  # NUEVO botón especial
 
 def generar_menu():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Botón COP USDT como fila propia arriba (recuadro aparte en el menú)
+    # Botón COP USDT como fila propia arriba
     markup.row(telebot.types.KeyboardButton(SPECIAL_COPUSDT_BTN))
     # Países en filas de a 2
     botones = [telebot.types.KeyboardButton(f"{emoji} {pais.title()}") for pais, emoji in emojis_paises.items()]
@@ -170,7 +283,7 @@ def _hoy_iso_ve():
     return (datetime.utcnow() - timedelta(hours=4)).date().isoformat()
 
 def _listar_tasas_hoy():
-    response = supabase.table("tasas").select("nombre_tasa, fecha_actual").order("fecha_actual", desc=True).execute()
+    response = supabase.table("tasas").select("nombre_tasa, fecha_actual, valor").order("fecha_actual", desc=True).execute()
     return response.data or []
 
 def obtener_pares_disponibles(nombre_pais):
@@ -190,7 +303,9 @@ def obtener_pares_disponibles(nombre_pais):
         for t in data:
             nt = (t.get("nombre_tasa") or "").lower()
             fa = t.get("fecha_actual") or ""
-            if fa.startswith(hoy) and nt in ("tasa full cop usdt", "tasa mayorista cop usdt"):
+            if fa.startswith(hoy) and nt in ("tasa full cop usdt", "tasa mayorista cop usdt",
+                                             "tasa público cop usdt", "tasa público promedio cop usdt",
+                                             "tasa mayorista promedio cop usdt", "tasa full promedio cop usdt"):
                 pares.add("COP USDT")
                 break
 
@@ -205,34 +320,54 @@ def _buscar_valor_hoy(data, nombre_tasa_lower, hoy_iso):
             return valor, hora.strftime("%H:%M")
     return None, None
 
-def _card_cop_usdt_full_may(full_act, full_prom, may_act, may_prom, hora):
-    # Recuadro especial para COP USDT
+def _card_cop_usdt_full_may(pair_key_norm, full_act, full_prom, may_act, may_prom, hora):
     line = "─" * 28
+    # aplicar truncados:
+    decs = DECIMALS_BY_PAIR.get(pair_key_norm)  # 'colombia usdt'
+    f_act  = _fmt_trunc(full_act, decs)
+    f_prom = _fmt_trunc(full_prom, decs) if full_prom is not None else "No disponible"
+    m_act  = _fmt_trunc(may_act, decs)
+    m_prom = _fmt_trunc(may_prom, decs) if may_prom is not None else "No disponible"
+
     return (
         f"┌{line}┐\n"
         f"│   💱  COP → USDT (P2P)        │\n"
         f"├{line}┤\n"
-        f"│  • Tasa Full Actual: {full_act}        │\n"
-        f"│  • Tasa Full Promedio: {full_prom if full_prom is not None else 'No disponible'} │\n"
-        f"│  • Tasa Mayorista Actual: {may_act}     │\n"
-        f"│  • Tasa Mayorista Promedio: {may_prom if may_prom is not None else 'No disponible'} │\n"
+        f"│  • Tasa Full Actual: {f_act}        │\n"
+        f"│  • Tasa Full Promedio: {f_prom} │\n"
+        f"│  • Tasa Mayorista Actual: {m_act}     │\n"
+        f"│  • Tasa Mayorista Promedio: {m_prom} │\n"
         f"├{line}┤\n"
         f"│  🕒 Última actualización: {hora}   │\n"
         f"└{line}┘"
     )
 
-def _card_cop_usdt_may_only(may_act, may_prom, hora):
+def _card_cop_usdt_may_only(pair_key_norm, may_act, may_prom, hora):
     line = "─" * 28
+    decs = DECIMALS_BY_PAIR.get(pair_key_norm)
+    m_act  = _fmt_trunc(may_act, decs)
+    m_prom = _fmt_trunc(may_prom, decs) if may_prom is not None else "No disponible"
+
     return (
         f"┌{line}┐\n"
         f"│   💱  COP → USDT (P2P)        │\n"
         f"├{line}┤\n"
-        f"│  • Tasa Mayorista Actual: {may_act}     │\n"
-        f"│  • Tasa Mayorista Promedio: {may_prom if may_prom is not None else 'No disponible'} │\n"
+        f"│  • Tasa Mayorista Actual: {m_act}     │\n"
+        f"│  • Tasa Mayorista Promedio: {m_prom} │\n"
         f"├{line}┤\n"
         f"│  🕒 Última actualización: {hora}   │\n"
         f"└{line}┘"
     )
+
+def _apply_fmt_pair_lines(pair_key_norm, lines: list[tuple[str, float | None]]):
+    """
+    Recibe una lista de (label, value) y devuelve líneas con valores truncados por par.
+    """
+    decs = DECIMALS_BY_PAIR.get(pair_key_norm)
+    out = []
+    for label, val in lines:
+        out.append(f"{label}: {_fmt_trunc(val, decs)}")
+    return "\n".join(out)
 
 def obtener_tasas_par(nombre_par, user_id):
     try:
@@ -246,6 +381,9 @@ def obtener_tasas_par(nombre_par, user_id):
 
         # --- Par único COP USDT con “recuadro” ---
         norm = nombre_par.strip().lower().replace("/", " ").replace("  ", " ")
+        # clave normalizada para decimales
+        pair_key_norm = _norm_pair(nombre_par if norm != "cop usdt" else "colombia usdt")
+
         if norm == "cop usdt":
             full_act, hora = _buscar_valor_hoy(data, "tasa full cop usdt", hoy)
             may_act,  _    = _buscar_valor_hoy(data, "tasa mayorista cop usdt", hoy)
@@ -257,12 +395,13 @@ def obtener_tasas_par(nombre_par, user_id):
 
             # súper restricción (solo Público) -> no aplica público aquí
             if user_id in USUARIOS_SOLO_PUBLICO:
+                decs = DECIMALS_BY_PAIR.get(pair_key_norm)
                 return (
                     "┌────────────────────────────┐\n"
                     "│   💱  COP → USDT (P2P)     │\n"
                     "├────────────────────────────┤\n"
-                    "│  • Tasa Público: No disponible           │\n"
-                    "│  • Tasa Público Promedio: No disponible  │\n"
+                    f"│  • Tasa Público: No disponible           │\n"
+                    f"│  • Tasa Público Promedio: No disponible  │\n"
                     "├────────────────────────────┤\n"
                     f"│  🕒 Última actualización: {hora or '--:--'}   │\n"
                     "└────────────────────────────┘"
@@ -272,12 +411,12 @@ def obtener_tasas_par(nombre_par, user_id):
             if (user_id in USUARIOS_LIMITADOS) or (user_id in USUARIOS_RESTRINGIDOS):
                 if may_act is None:
                     return "❌ No hay datos disponibles para COP USDT."
-                return _card_cop_usdt_may_only(may_act, may_prom, hora or "--:--")
+                return _card_cop_usdt_may_only(pair_key_norm, may_act, may_prom, hora or "--:--")
 
             # sin restricción -> full + mayorista
             if full_act is None or may_act is None:
                 return "❌ No hay datos suficientes disponibles para COP USDT."
-            return _card_cop_usdt_full_may(full_act, full_prom, may_act, may_prom, hora or "--:--")
+            return _card_cop_usdt_full_may(pair_key_norm, full_act, full_prom, may_act, may_prom, hora or "--:--")
 
         # --- Flujo normal de pares con " - " ---
         def buscar(n): return _buscar_valor_hoy(data, n.lower(), hoy)
@@ -288,38 +427,51 @@ def obtener_tasas_par(nombre_par, user_id):
         tasa_may_actual, _            = buscar(f"Tasa mayorista {nombre_par}")
         tasa_may_prom, _              = buscar(f"Tasa mayorista promedio {nombre_par}")
 
+        # clave normalizada para decimales (ej: "chile - venezuela")
+        pair_key_norm = _norm_pair(nombre_par)
+
         if user_id in USUARIOS_SOLO_PUBLICO:
             if tasa_pub_actual is None:
                 return "❌ No hay datos disponibles para ese par."
+            cuerpo = _apply_fmt_pair_lines(pair_key_norm, [
+                ("Tasa Público Actual", tasa_pub_actual),
+                ("Tasa Público Promedio", tasa_pub_prom),
+            ])
             return (
                 f"📊 Tasas para {nombre_par}\n\n"
-                f"Tasa Público Actual: {tasa_pub_actual}\n"
-                f"Tasa Público Promedio: {tasa_pub_prom if tasa_pub_prom is not None else 'No disponible'}\n\n"
+                f"{cuerpo}\n\n"
                 f"🕒 Última actualización de datos: {hora_actual}"
             )
 
         if (user_id in USUARIOS_LIMITADOS) or (user_id in USUARIOS_RESTRINGIDOS):
             if tasa_pub_actual is None or tasa_may_actual is None:
                 return "❌ No hay datos disponibles para ese par."
+            cuerpo = _apply_fmt_pair_lines(pair_key_norm, [
+                ("Tasa Mayorista Actual", tasa_may_actual),
+                ("Tasa Mayorista Promedio", tasa_may_prom),
+                ("Tasa Público Actual", tasa_pub_actual),
+                ("Tasa Público Promedio", tasa_pub_prom),
+            ])
             return (
                 f"📊 Tasas para {nombre_par}\n\n"
-                f"Tasa Mayorista Actual: {tasa_may_actual}\n"
-                f"Tasa Mayorista Promedio: {tasa_may_prom if tasa_may_prom is not None else 'No disponible'}\n"
-                f"Tasa Público Actual: {tasa_pub_actual}\n"
-                f"Tasa Público Promedio: {tasa_pub_prom if tasa_pub_prom is not None else 'No disponible'}\n\n"
+                f"{cuerpo}\n\n"
                 f"🕒 Última actualización de datos: {hora_actual}"
             )
 
         if tasa_full_actual is None or tasa_pub_actual is None or tasa_may_actual is None:
             return "❌ No hay datos suficientes disponibles para ese par."
+
+        cuerpo = _apply_fmt_pair_lines(pair_key_norm, [
+            ("Tasa Full Actual", tasa_full_actual),
+            ("Tasa Full Promedio", tasa_full_prom),
+            ("Tasa Mayorista Actual", tasa_may_actual),
+            ("Tasa Mayorista Promedio", tasa_may_prom),
+            ("Tasa Público Actual", tasa_pub_actual),
+            ("Tasa Público Promedio", tasa_pub_prom),
+        ])
         return (
             f"📊 Tasas para {nombre_par}\n\n"
-            f"Tasa Full Actual: {tasa_full_actual}\n"
-            f"Tasa Full Promedio: {tasa_full_prom if tasa_full_prom is not None else 'No disponible'}\n"
-            f"Tasa Mayorista Actual: {tasa_may_actual}\n"
-            f"Tasa Mayorista Promedio: {tasa_may_prom if tasa_may_prom is not None else 'No disponible'}\n"
-            f"Tasa Público Actual: {tasa_pub_actual}\n"
-            f"Tasa Público Promedio: {tasa_pub_prom if tasa_pub_prom is not None else 'No disponible'}\n\n"
+            f"{cuerpo}\n\n"
             f"🕒 Última actualización de datos: {hora_actual}"
         )
     except Exception as e:
@@ -345,7 +497,6 @@ def cmd_id(message):
 def cmd_ping(message):
     bot.reply_to(message, "🏓 pong")
 
-# Atajo por comando (opcional) para el recuadro COP USDT
 @bot.message_handler(commands=["copusdt"])
 def cmd_copusdt(message):
     if not autorizado(message):
