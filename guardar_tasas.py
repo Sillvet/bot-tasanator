@@ -116,37 +116,27 @@ margenes_personalizados["México - Venezuela"] = {"publico": 0.10, "mayorista": 
 margenes_personalizados["Argentina - Perú"] = {"publico": 0.07, "mayorista": 0.04}
 
 # ✅ FIX solicitado: Zelle PEN y Zelle ARS (pares con destino USA)
-#    El cálculo usa base "Origen - USA", por eso agregamos:
 margenes_personalizados["Perú - USA"] = {"publico": 0.10, "mayorista": 0.07}
 margenes_personalizados["Argentina - USA"] = {"publico": 0.10, "mayorista": 0.07}
 
 pares_sumar_margen = {"Chile - USA", "Colombia - Venezuela"}
 
 def margen_por_defecto(base: str) -> Dict[str, float]:
-    # Uruguay por defecto: 7% público, 4% mayorista
     if base.startswith("Uruguay - ") or base.endswith(" - Uruguay"):
         return {"publico": 0.07, "mayorista": 0.04}
-    # México por defecto
     if base.startswith("México - "):
         return {"publico": 0.07, "mayorista": 0.10}
-    # Genérico
     return {"publico": 0.07, "mayorista": 0.045}
 
 # ------- Decimales dinámicos -------
 def decimales_auto(t: float, origen: str, destino: str) -> int:
     base_rule = 5 if (origen == "Chile" and destino in ["Panamá", "Ecuador", "Europa", "Brasil"]) else 4
-    if t < 0.0001:
-        mag_rule = 8
-    elif t < 0.01:
-        mag_rule = 6
-    elif t < 1:
-        mag_rule = 5
-    elif t < 100:
-        mag_rule = 4
-    elif t < 1000:
-        mag_rule = 3
-    else:
-        mag_rule = 2
+    if t < 0.0001: mag_rule = 8
+    elif t < 0.01: mag_rule = 6
+    elif t < 1: mag_rule = 5
+    elif t < 100: mag_rule = 4
+    elif t < 1000: mag_rule = 3
+    else: mag_rule = 2
     return max(base_rule, mag_rule)
 
 # ------- Utilidades -------
@@ -219,12 +209,10 @@ def _sort_items_by_price_asc(items: List[Dict[str, Any]]) -> List[Dict[str, Any]
         return pr if pr is not None else float("inf")
     return sorted(items or [], key=_p)
 
-# ------- Merchant helpers (verificados + únicos) -------
+# ------- Merchant helpers -------
 def _is_verified_merchant(advertiser: Dict[str, Any]) -> bool:
-    if not advertiser:
-        return False
-    if str(advertiser.get("userType", "")).lower() != "merchant":
-        return False
+    if not advertiser: return False
+    if str(advertiser.get("userType", "")).lower() != "merchant": return False
     flags = [
         advertiser.get("isMerchantCertified"),
         advertiser.get("isUserCertified"),
@@ -235,12 +223,9 @@ def _is_verified_merchant(advertiser: Dict[str, Any]) -> bool:
     ]
     grades = str(advertiser.get("userGrade", "")).lower()
     kyc = str(advertiser.get("userKycType", "")).lower()
-    if any(bool(f) for f in flags):
-        return True
-    if grades in ("verified", "merchant", "gold", "pro"):
-        return True
-    if kyc in ("kyc", "person", "merchant", "verified"):
-        return True
+    if any(bool(f) for f in flags): return True
+    if grades in ("verified", "merchant", "gold", "pro"): return True
+    if kyc in ("kyc", "person", "merchant", "verified"): return True
     return True
 
 def _unique_verified_merchants(items: List[Dict[str, Any]], max_n: int) -> List[Dict[str, Any]]:
@@ -248,15 +233,12 @@ def _unique_verified_merchants(items: List[Dict[str, Any]], max_n: int) -> List[
     seen = set()
     for it in items or []:
         advertiser = (it.get("advertiser") or {})
-        if not _is_verified_merchant(advertiser):
-            continue
+        if not _is_verified_merchant(advertiser): continue
         key = advertiser.get("userNo") or advertiser.get("nickName")
-        if not key or key in seen:
-            continue
+        if not key or key in seen: continue
         seen.add(key)
         out.append(it)
-        if len(out) >= max_n:
-            break
+        if len(out) >= max_n: break
     return out
 
 def _filter_tradable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -264,26 +246,21 @@ def _filter_tradable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for it in items or []:
         adv = it.get("adv") or {}
         if "tradable" in adv:
-            if bool(adv.get("tradable")):
-                out.append(it)
+            if bool(adv.get("tradable")): out.append(it)
         else:
             out.append(it)
     return out
 
-# --- Petición dentro del contexto de la página (como la UI) ---
+# --- Peticiones ---
 def fetch_ui_page(page, fiat: str, side: str, countries: Optional[List[str]],
                   pay_types: Optional[List[str]], page_no: int,
                   publisher_type: Optional[str] = None):
     api = f"{BASE}/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
-        "page": page_no,
-        "rows": ROWS,
-        "asset": ASSET,
-        "tradeType": side.upper(),
-        "fiat": fiat,
+        "page": page_no, "rows": ROWS, "asset": ASSET,
+        "tradeType": side.upper(), "fiat": fiat,
         "publisherType": publisher_type,
-        "payTypes": pay_types or [],
-        "countries": countries or []
+        "payTypes": pay_types or [], "countries": countries or []
     }
     data = page.evaluate(
         """async ({api, payload}) => {
@@ -306,15 +283,12 @@ def capture_first_page(fiat: str, side: str, countries: Optional[List[str]]) -> 
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
 
-        def _try(cset):
-            return fetch_ui_page(pg, fiat, side, cset, None, 1, publisher_type="merchant")
+        def _try(cset): return fetch_ui_page(pg, fiat, side, cset, None, 1, publisher_type="merchant")
 
         if fiat == "CLP":
             items = _try(None)
-            if not items:
-                items = _try(["CL"])
-            if not items and countries is not None:
-                items = _try(countries)
+            if not items: items = _try(["CL"])
+            if not items and countries is not None: items = _try(countries)
         else:
             items = _try(countries)
 
@@ -327,16 +301,7 @@ def capture_first_page(fiat: str, side: str, countries: Optional[List[str]]) -> 
         items = _sort_items_by_price_asc(items)
     return items
 
-def capture_method_page_exact(
-    fiat: str,
-    side: str,
-    method_label: str,
-    page_no: int = 1,
-    need_n: int = 10,
-    countries: Optional[List[str]] = None,
-    merchant_only: bool = False,
-    dedupe_verified: bool = False,
-) -> List[Dict[str, Any]]:
+def capture_method_page_exact(fiat: str, side: str, method_label: str, page_no: int = 1, need_n: int = 10, countries: Optional[List[str]] = None, merchant_only: bool = False, dedupe_verified: bool = False) -> List[Dict[str, Any]]:
     method_ids = PAYTYPE_IDS.get(method_label, [])
     url = page_url(fiat, side)
 
@@ -345,31 +310,21 @@ def capture_method_page_exact(
         ctx = browser.new_context(locale="es-ES")
         pg = ctx.new_page()
         pg.goto(url, wait_until="domcontentloaded")
-
-        items = fetch_ui_page(
-            pg, fiat, side, countries, method_ids, page_no,
-            publisher_type=("merchant")
-        )
+        items = fetch_ui_page(pg, fiat, side, countries, method_ids, page_no, publisher_type=("merchant"))
         browser.close()
 
     items = _filter_tradable(items)
+    if dedupe_verified: items = _unique_verified_merchants(items, need_n)
+    else: items = _unique_verified_merchants(items, max_n=50)
 
-    if dedupe_verified:
-        items = _unique_verified_merchants(items, need_n)
-    else:
-        items = _unique_verified_merchants(items, max_n=50)
-
-    if side.upper() == "SELL":
-        items = _sort_items_by_price_asc(items)
+    if side.upper() == "SELL": items = _sort_items_by_price_asc(items)
     return items[:need_n]
 
-def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
-                                 countries: Optional[List[str]], need_n: int = TOP_N) -> List[Dict[str, Any]]:
+def capture_method_topN_any_page(fiat: str, side: str, method_label: str, countries: Optional[List[str]], need_n: int = TOP_N) -> List[Dict[str, Any]]:
     method_ids = PAYTYPE_IDS.get(method_label, [])
     url = page_url(fiat, side)
     country_sets: List[Optional[List[str]]] = [None]
-    if countries:
-        country_sets.append(countries)
+    if countries: country_sets.append(countries)
 
     collected: List[Dict[str, Any]] = []
     seen_advnos = set()
@@ -387,16 +342,12 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
                 for it in arr:
                     adv = it.get("adv") or {}
                     advno = adv.get("advNo") or (adv.get("price"), (it.get("advertiser") or {}).get("nickName"))
-                    if advno in seen_advnos:
-                        continue
+                    if advno in seen_advnos: continue
                     seen_advnos.add(advno)
                     collected.append(it)
-                    if len(collected) >= need_n:
-                        break
-                if len(collected) >= need_n or not arr:
-                    break
-            if len(collected) >= need_n:
-                break
+                    if len(collected) >= need_n: break
+                if len(collected) >= need_n or not arr: break
+            if len(collected) >= need_n: break
 
         if len(collected) < need_n:
             for cset in country_sets:
@@ -407,24 +358,17 @@ def capture_method_topN_any_page(fiat: str, side: str, method_label: str,
                     for it in arr:
                         adv = it.get("adv") or {}
                         advno = adv.get("advNo") or (adv.get("price"), (it.get("advertiser") or {}).get("nickName"))
-                        if advno in seen_advnos:
-                            continue
+                        if advno in seen_advnos: continue
                         seen_advnos.add(advno)
                         collected.append(it)
-                        if len(collected) >= need_n:
-                            break
-                    if len(collected) >= need_n or not arr:
-                        break
-                if len(collected) >= need_n:
-                    break
+                        if len(collected) >= need_n: break
+                    if len(collected) >= need_n or not arr: break
+                if len(collected) >= need_n: break
 
         browser.close()
 
     collected = _unique_verified_merchants(collected, need_n)
-
-    if side.upper() == "SELL":
-        collected = _sort_items_by_price_asc(collected)
-
+    if side.upper() == "SELL": collected = _sort_items_by_price_asc(collected)
     return collected[:need_n]
 
 def topN_from_items(items: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
@@ -458,71 +402,53 @@ def guardar_tasa(nombre: str, valor: float, decimales: int = 4):
             "valor": round(float(valor), decimales),
             "fecha_actual": fecha_ve.isoformat()
         }).execute()
-        if not getattr(res, "data", None):
-            print(f"❌ No se guardó {nombre}. Respuesta vacía.")
-        else:
-            print(f"✅ Tasa guardada: {nombre} = {round(float(valor), decimales)}")
-    except Exception as e:
-        print(f"❌ Excepción al guardar {nombre}: {e}")
+        if not getattr(res, "data", None): print(f"❌ No se guardó {nombre}. Respuesta vacía.")
+        else: print(f"✅ Tasa guardada: {nombre} = {round(float(valor), decimales)}")
+    except Exception as e: print(f"❌ Excepción al guardar {nombre}: {e}")
 
 def promedio_tasa(nombre: str) -> Optional[float]:
     try:
-        resp = supabase.table("tasas").select("valor")\
-                       .eq("nombre_tasa", nombre)\
-                       .order("fecha_actual", desc=True).limit(2).execute()
+        resp = supabase.table("tasas").select("valor").eq("nombre_tasa", nombre).order("fecha_actual", desc=True).limit(2).execute()
         vals = [Decimal(r["valor"]) for r in (resp.data or [])]
-        if len(vals) == 2:
-            return float((vals[0] + vals[1]) / 2)
-    except Exception as e:
-        print(f"⚠️ promedio_tasa error para {nombre}: {e}")
+        if len(vals) == 2: return float((vals[0] + vals[1]) / 2)
+    except Exception as e: print(f"⚠️ promedio_tasa error para {nombre}: {e}")
     return None
 
+def limpieza_automatica_tasas():
+    try:
+        limite = (datetime.utcnow() - timedelta(days=60)).isoformat()
+        res = supabase.table("tasas").delete().lt("fecha_actual", limite).execute()
+        print(f"🧹 Mantenimiento: Tasas anteriores a {limite} eliminadas.")
+    except Exception as e:
+        print(f"⚠️ Alerta: No se pudo limpiar la base de datos de tasas: {e}")
+
 # ------- Orquestación -------
-def tomar_base_y_guardar(label: str, fiat: str, side: str,
-                         method: Optional[str], countries: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+def tomar_base_y_guardar(label: str, fiat: str, side: str, method: Optional[str], countries: Optional[List[str]]) -> Optional[Dict[str, Any]]:
     side_u = side.upper()
 
-    if side_u == "SELL":
-        base_idx = 1
-        need_n = 10
+    if side_u == "SELL": base_idx, need_n = 1, 10
     else:
         base_idx = BASE_INDEX_BY_MARKET.get((label, side_u), TOP_N)
         need_n = base_idx
 
     if method == "Zelle" and fiat == "USD":
-        items = capture_method_page_exact(
-            fiat=f"{fiat}",
-            side=side_u,
-            method_label="Zelle",
-            page_no=1,
-            need_n=10,
-            countries=None,
-            merchant_only=True,
-            dedupe_verified=True
-        )
+        items = capture_method_page_exact(fiat=f"{fiat}", side=side_u, method_label="Zelle", page_no=1, need_n=10, countries=None, merchant_only=True, dedupe_verified=True)
     else:
-        if method:
-            items = capture_method_topN_any_page(fiat, side_u, method, countries, need_n=need_n)
-        else:
-            items = capture_first_page(fiat, side_u, countries)
+        if method: items = capture_method_topN_any_page(fiat, side_u, method, countries, need_n=need_n)
+        else: items = capture_first_page(fiat, side_u, countries)
 
     offers = topN_from_items(items, 10 if (method == "Zelle" and fiat == "USD") else need_n)
     print_block(label, fiat, side_u, offers)
-    if not offers:
-        return None
+    if not offers: return None
 
     if method == "Zelle" and fiat == "USD":
-        if side_u == "SELL":
-            base = min(offers, key=lambda o: (o["price"] if o["price"] is not None else float("inf")))
-        else:
-            base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
+        if side_u == "SELL": base = min(offers, key=lambda o: (o["price"] if o["price"] is not None else float("inf")))
+        else: base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
     else:
-        if side_u == "SELL":
-            base = offers[0]
+        if side_u == "SELL": base = offers[0]
         elif (label, side_u) in {("Colombia", "BUY"), ("Argentina", "BUY"), ("México", "BUY")}:
             base = max(offers, key=lambda o: (o["price"] if o["price"] is not None else -float("inf")))
-        else:
-            base = offers[base_idx - 1] if len(offers) >= base_idx else offers[-1]
+        else: base = offers[base_idx - 1] if len(offers) >= base_idx else offers[-1]
 
     precio_base = base["price"]
     vendedor = base["seller"]
@@ -535,51 +461,39 @@ def tomar_base_y_guardar(label: str, fiat: str, side: str,
     nombre = f"USDT en {label}" + (" (venta)" if side_u == "SELL" else "")
     guardar_tasa(nombre, precio_base)
 
-    # === Par único COP USDT ===
     if label == "Colombia" and side_u == "BUY":
         try:
             dec = 2
             full_cop_usdt = float(precio_base)
             may_cop_usdt  = full_cop_usdt * 1.07
-
             guardar_tasa("Tasa full COP USDT", full_cop_usdt, dec)
             guardar_tasa("Tasa mayorista COP USDT", may_cop_usdt, dec)
-
             pf = promedio_tasa("Tasa full COP USDT")
             pm = promedio_tasa("Tasa mayorista COP USDT")
-            if pf is not None:
-                guardar_tasa("Tasa full promedio COP USDT", pf, dec)
-            if pm is not None:
-                guardar_tasa("Tasa mayorista promedio COP USDT", pm, dec)
-
+            if pf is not None: guardar_tasa("Tasa full promedio COP USDT", pf, dec)
+            if pm is not None: guardar_tasa("Tasa mayorista promedio COP USDT", pm, dec)
             print("✅ Par único COP USDT actualizado (full y mayorista).")
-        except Exception as e:
-            print(f"⚠️ No se pudo actualizar 'COP USDT': {e}")
+        except Exception as e: print(f"⚠️ No se pudo actualizar 'COP USDT': {e}")
 
     return {"price": float(precio_base), "seller": vendedor, "methods": metodos, "fiat": fiat}
 
-def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
-                   precios_sell: Dict[str, Dict[str, Any]]):
+def calcular_pares(precios_buy: Dict[str, Dict[str, Any]], precios_sell: Dict[str, Dict[str, Any]]):
     for origen, odata in precios_buy.items():
         for destino, ddata in precios_sell.items():
-            if origen == destino:
-                continue
+            if origen == destino: continue
             base = f"{origen} - {destino}"
             p_origen = odata["price"]
             p_dest   = ddata["price"]
 
             if destino == "USA":
-                # Regla USA: inversa + márgenes por resta
                 tasa_full = p_dest / p_origen
                 decimales = 6
                 margen = margenes_personalizados.get(base, margen_por_defecto(base))
                 tasa_publico   = tasa_full * (1 - margen["publico"])
                 tasa_mayorista = tasa_full * (1 - margen["mayorista"])
             else:
-                if base in pares_sumar_margen:
-                    tasa_full = p_origen / p_dest
-                else:
-                    tasa_full = p_dest / p_origen
+                if base in pares_sumar_margen: tasa_full = p_origen / p_dest
+                else: tasa_full = p_dest / p_origen
                 decimales = decimales_auto(tasa_full, origen, destino)
                 margen = margenes_personalizados.get(base, margen_por_defecto(base))
                 if base in pares_sumar_margen:
@@ -589,21 +503,25 @@ def calcular_pares(precios_buy: Dict[str, Dict[str, Any]],
                     tasa_publico   = tasa_full * (1 - margen["publico"])
                     tasa_mayorista = tasa_full * (1 - margen["mayorista"])
 
+            # ---> CÁLCULO DE TASA PROMOCIONAL <---
+            tasa_promocional = (tasa_publico + tasa_mayorista) / 2
+
             guardar_tasa(f"Tasa full {base}", tasa_full, decimales)
             guardar_tasa(f"Tasa público {base}", tasa_publico, decimales)
+            guardar_tasa(f"Tasa promocional {base}", tasa_promocional, decimales)
             guardar_tasa(f"Tasa mayorista {base}", tasa_mayorista, decimales)
 
             pf = promedio_tasa(f"Tasa full {base}")
             pp = promedio_tasa(f"Tasa público {base}")
+            ppromo = promedio_tasa(f"Tasa promocional {base}")
             pm = promedio_tasa(f"Tasa mayorista {base}")
-            if pf is not None:
-                guardar_tasa(f"Tasa full promedio {base}", pf, decimales)
-            if pp is not None:
-                guardar_tasa(f"Tasa público promedio {base}", pp, decimales)
-            if pm is not None:
-                guardar_tasa(f"Tasa mayorista promedio {base}", pm, decimales)
+            
+            if pf is not None: guardar_tasa(f"Tasa full promedio {base}", pf, decimales)
+            if pp is not None: guardar_tasa(f"Tasa público promedio {base}", pp, decimales)
+            if ppromo is not None: guardar_tasa(f"Tasa promocional promedio {base}", ppromo, decimales)
+            if pm is not None: guardar_tasa(f"Tasa mayorista promedio {base}", pm, decimales)
 
-            print(f"✅ Tasas {base} actualizadas.")
+            print(f"✅ Tasas {base} (incluyendo Promocional) actualizadas.")
 
 def main():
     print("\n🔁 Ejecutando actualización…")
@@ -612,29 +530,25 @@ def main():
 
     for cfg in BUY_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "BUY", cfg.get("method"), cfg.get("countries"))
-        if res:
-            precios_buy[cfg["label"]] = res
+        if res: precios_buy[cfg["label"]] = res
 
     for cfg in SELL_CONFIGS:
         res = tomar_base_y_guardar(cfg["label"], cfg["fiat"], "SELL", cfg.get("method"), cfg.get("countries"))
-        if res:
-            precios_sell[cfg["label"]] = res
+        if res: precios_sell[cfg["label"]] = res
 
     calcular_pares(precios_buy, precios_sell)
+    limpieza_automatica_tasas()
     print("\n✅ Proceso finalizado.")
 
 def actualizar_todas_las_tasas():
     return main()
 
-# --- Patch de márgenes al final (se mantiene) ---
 margenes_personalizados.update({
-    # (Estas claves "USA - X" no afectan el cálculo base "X - USA", pero las dejamos por compat.)
     "USA - Chile":     {"publico": 0.10, "mayorista": 0.07},
     "USA - Colombia":  {"publico": 0.10, "mayorista": 0.07},
     "USA - Argentina": {"publico": 0.10, "mayorista": 0.07},
     "USA - Venezuela": {"publico": 0.10, "mayorista": 0.07},
 
-    # Direcciones específicas (sí afectan base) — se refuerzan aquí también
     "Argentina - Chile":     {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - Argentina": {"publico": 0.07, "mayorista": 0.04},
     "Venezuela - USA":       {"publico": 0.07, "mayorista": 0.04},
@@ -646,7 +560,6 @@ margenes_personalizados.update({
     "México - Argentina":    {"publico": 0.10, "mayorista": 0.07},
     "México - Colombia":     {"publico": 0.10, "mayorista": 0.07},
 
-    # ✅ Reforzamos aquí también los FIX pedidos:
     "Perú - USA":       {"publico": 0.10, "mayorista": 0.07},
     "Argentina - USA":  {"publico": 0.10, "mayorista": 0.07},
 })
