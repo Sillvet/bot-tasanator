@@ -26,6 +26,7 @@ try:
     CHAT_ID_MATRIZ     = int(os.getenv("CHAT_ID_MATRIZ", "-5258532198"))
     CHAT_ID_OPERADORES = int(os.getenv("CHAT_ID_OPERADORES", "-4834814893"))
     CHAT_ID_GANANCIAS  = int(os.getenv("CHAT_ID_GANANCIAS", "-4867786872"))
+    CHAT_ID_LOGS       = int(os.getenv("CHAT_ID_LOGS", "0")) 
 except ValueError:
     raise RuntimeError("❌ Error: Los IDs de chat en .env deben ser números enteros.")
 
@@ -40,7 +41,7 @@ USER_ALIAS = {
     794327412:  "NATALY"
 }
 
-print(f"ENV: Token={_mask(TELEGRAM_TOKEN)} | Matriz={CHAT_ID_MATRIZ}")
+print(f"ENV: Token={_mask(TELEGRAM_TOKEN)} | Matriz={CHAT_ID_MATRIZ} | Logs={CHAT_ID_LOGS}")
 
 if not all([TELEGRAM_TOKEN, SUPABASE_URL, SUPABASE_KEY]):
     raise RuntimeError("Faltan variables en .env")
@@ -51,7 +52,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Estado en memoria
 user_data = {}        
 operator_uploads = {} 
-operator_custom_reason = {}
+operator_confirmations = {} # NUEVO: Controla las confirmaciones de fotos de los operadores
 DASHBOARD_MSG_ID = None 
 SALDO_STATE = {}
 PRECARGA_STATE = {}
@@ -59,7 +60,6 @@ PRECARGA_STATE = {}
 paises = ["Chile", "Venezuela", "Colombia", "Argentina", "Perú", "Brasil", "Europa", "USA", "México", "Panamá", "Ecuador"]
 PAIS_MONEDA = {"Chile": "CLP", "Venezuela": "VES", "Colombia": "COP", "Argentina": "ARS", "Perú": "PEN", "Brasil": "BRL", "Europa": "EUR", "USA": "USD", "México": "MXN", "Panamá": "USD", "Ecuador": "USD"}
 CUENTA_POR_PAIS = {p: f"Operativa-{PAIS_MONEDA.get(p)}" for p in paises}
-MAX_LEN_NOMBRE, MAX_LEN_DOC, MAX_LEN_CTA, MAX_LEN_BANCO = 60, 30, 34, 60
 
 # ==========================================
 # 2. SEGURIDAD Y HELPERS
@@ -81,6 +81,7 @@ def _norm(s):
     return "".join(c for c in unicodedata.normalize("NFD", s.strip().lower()) if unicodedata.category(c) != "Mn")
 
 def safe_send_message(chat_id, text, **kwargs):
+    if chat_id == 0: return None 
     try: return bot.send_message(chat_id, text, **kwargs)
     except apihelper.ApiTelegramException as e:
         new_id = getattr(e, "result_json", {}).get("parameters", {}).get("migrate_to_chat_id")
@@ -126,11 +127,6 @@ def obtener_valor_usdt(origen):
         return float(res.data[0]["valor"]) if res.data else None
     except: return None
 
-def convertir_a_usdt(pais, monto):
-    px = obtener_valor_usdt(pais)
-    return round(monto / px, 6) if px and px > 0 else 0.0
-
-# --- Generador de Código ---
 def next_tracking_code_monthly(message) -> str:
     user_id = message.from_user.id
     period = datetime.utcnow().strftime("%Y%m")
@@ -143,7 +139,6 @@ def next_tracking_code_monthly(message) -> str:
     except Exception as e: print("⚠️ Fallo RPC secuencia:", e)
     return f"{alias}-{str(int(datetime.utcnow().timestamp()))[-5:]}"
 
-# --- Ledger ---
 def get_saldo_actual(pais):
     try:
         r = supabase.table("saldos_pais_actual").select("*").eq("pais", pais).limit(1).execute()
@@ -173,15 +168,19 @@ def actualizar_saldo_y_ledger(pais, delta_local, tx_id=None, motivo="transaccion
         }).execute()
     except Exception as e: print(f"❌ Error ledger: {e}")
 
-# --- REGISTRO CON TRAZABILIDAD ---
 def registrar_transaccion(data):
     try:
         payload = {
             "usuario": data["usuario"], "usuario_id": data.get("usuario_id"),
             "origen": data["origen"], "destino": data["destino"], "tipo_tasa": data["tipo_tasa"],
             "monto_envio": data["monto_envio"], "monto_recibir": data["monto_recibir"],
-            "nombre_receptor": data["nombre_receptor"], "documento_receptor": data["documento_receptor"],
-            "cuenta_receptor": data["cuenta_receptor"], "nombre_banco": data["nombre_banco"],
+            "tipo_operacion": data.get("tipo_operacion"),
+            "datos_cliente": data.get("datos_cliente"),
+            "observaciones": data.get("observaciones"),
+            "nombre_receptor": "Ver Datos Cliente",
+            "documento_receptor": "-",
+            "cuenta_receptor": "Ver Datos Cliente",
+            "nombre_banco": data.get("tipo_operacion"), 
             "codigo_transaccion": data["codigo_transaccion"], "fecha": now_utc_minus4_iso(),
             "status": "NUEVA",
             "metodo_pago": data.get("metodo_pago"),     
@@ -243,8 +242,10 @@ def go_back(chat_id):
     
     funcs = {
         "origen": show_origen, "destino": show_destino, "tipo_tasa": show_tipo_tasa, 
-        "monto": ask_monto, "nombre": ask_nombre, "doc": ask_documento, 
-        "cta": ask_cuenta, "banco": ask_banco, 
+        "monto": ask_monto, 
+        "tipo_operacion": ask_tipo_operacion,
+        "datos_cliente": ask_datos_cliente,
+        "observaciones": ask_observaciones,
         "metodo": ask_metodo_pago, "comprobante": ask_comprobante_entrada
     }
     
@@ -314,9 +315,17 @@ def show_tipo_tasa(chat_id):
 def select_tipo_tasa(message):
     if _handle_nav(message) == "back": return go_back(message.chat.id)
     st = _ensure_state(message.chat.id)
+    if "map_tasa" not in st:
+        bot.send_message(message.chat.id, "⚠️ **Sesión reiniciada.** Por favor selecciona el destino nuevamente.")
+        return show_destino(message.chat.id)
+
     raw = st["map_tasa"].get(message.text, message.text)
     tasa, nombre = obtener_tasa(st["origen"], st["destino"], raw)
-    if not tasa: return show_tipo_tasa(message.chat.id)
+    
+    if not tasa: 
+        bot.send_message(message.chat.id, "⚠️ Error leyendo tasa. Intenta de nuevo.")
+        return show_tipo_tasa(message.chat.id)
+        
     st.update({"tipo_tasa": raw, "tasa": tasa, "usuario_id": message.from_user.id, "usuario": message.from_user.first_name})
     bot.send_message(message.chat.id, f"📌 Tasa: *{tasa}*", parse_mode="Markdown")
     ask_monto(message.chat.id)
@@ -333,49 +342,68 @@ def input_monto(message):
         m = float(message.text.replace(",", "."))
         st["monto_envio"] = m
         st["monto_recibir"] = round(m / st["tasa"], 2) if st["origen"]=="Colombia" and st["destino"]=="Venezuela" else round(m * st["tasa"], 2)
-        ask_nombre(message.chat.id)
+        ask_tipo_operacion(message.chat.id)
     except: ask_monto(message.chat.id)
 
-def ask_nombre(chat_id):
-    _push_step(chat_id, "nombre")
-    bot.send_message(chat_id, "👤 Nombre Receptor:", reply_markup=_nav_keyboard())
-    bot.register_next_step_handler_by_chat_id(chat_id, lambda m: _save_field(m, "nombre_receptor", MAX_LEN_NOMBRE, ask_documento))
+def ask_tipo_operacion(chat_id):
+    _push_step(chat_id, "tipo_operacion")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("📱 Pago Móvil", "🏦 Transferencia")
+    kb.row(BTN_BACK, BTN_CANCEL)
+    bot.send_message(chat_id, "📤 **¿Cómo enviaremos el dinero al cliente?**", reply_markup=kb, parse_mode="Markdown")
+    bot.register_next_step_handler_by_chat_id(chat_id, input_tipo_operacion)
 
-def _save_field(message, key, limit, next_func):
+def input_tipo_operacion(message):
+    if _handle_nav(message) == "back": return go_back(message.chat.id)
+    text = message.text
+    if text not in ["📱 Pago Móvil", "🏦 Transferencia"]:
+        return ask_tipo_operacion(message.chat.id)
+    
+    st = _ensure_state(message.chat.id)
+    st["tipo_operacion"] = text
+    ask_datos_cliente(message.chat.id)
+
+def ask_datos_cliente(chat_id):
+    _push_step(chat_id, "datos_cliente")
+    st = _ensure_state(chat_id)
+    tipo = st.get("tipo_operacion")
+    
+    msg_instruct = "📋 **Pega los datos bancarios AQUÍ (un solo mensaje):**"
+    if tipo == "📱 Pago Móvil":
+        msg_instruct += "\n\n_Formato sugerido: Teléfono - Cédula - Banco_"
+    else:
+        msg_instruct += "\n\n_Formato sugerido: Cuenta - Nombre - Cédula - Banco_"
+        
+    bot.send_message(chat_id, msg_instruct, reply_markup=_nav_keyboard(), parse_mode="Markdown")
+    bot.register_next_step_handler_by_chat_id(chat_id, input_datos_cliente)
+
+def input_datos_cliente(message):
     if _handle_nav(message) == "back": return go_back(message.chat.id)
     st = _ensure_state(message.chat.id)
-    st[key] = message.text[:limit]
-    next_func(message.chat.id)
+    st["datos_cliente"] = message.text 
+    ask_observaciones(message.chat.id)
 
-def ask_documento(chat_id):
-    _push_step(chat_id, "doc")
-    bot.send_message(chat_id, "🆔 Documento:", reply_markup=_nav_keyboard())
-    bot.register_next_step_handler_by_chat_id(chat_id, lambda m: _save_field(m, "documento_receptor", MAX_LEN_DOC, ask_cuenta))
+def ask_observaciones(chat_id):
+    _push_step(chat_id, "observaciones")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("🚫 Ninguna")
+    kb.row(BTN_BACK, BTN_CANCEL)
+    bot.send_message(chat_id, "📝 **¿Alguna observación para el operador?**", reply_markup=kb, parse_mode="Markdown")
+    bot.register_next_step_handler_by_chat_id(chat_id, input_observaciones)
 
-def ask_cuenta(chat_id):
-    _push_step(chat_id, "cta")
-    bot.send_message(chat_id, "🏦 Cuenta:", reply_markup=_nav_keyboard())
-    bot.register_next_step_handler_by_chat_id(chat_id, lambda m: _save_field(m, "cuenta_receptor", MAX_LEN_CTA, ask_banco))
-
-def ask_banco(chat_id):
-    _push_step(chat_id, "banco")
-    bot.send_message(chat_id, "🏦 Banco:", reply_markup=_nav_keyboard())
-    bot.register_next_step_handler_by_chat_id(chat_id, input_banco)
-
-def input_banco(message):
+def input_observaciones(message):
     if _handle_nav(message) == "back": return go_back(message.chat.id)
     st = _ensure_state(message.chat.id)
-    st["nombre_banco"] = message.text[:MAX_LEN_BANCO]
-    st["codigo_transaccion"] = next_tracking_code_monthly(message)
+    obs = message.text
+    st["observaciones"] = "" if obs == "🚫 Ninguna" else obs
     ask_metodo_pago(message.chat.id)
 
-# === NUEVAS FUNCIONES V4 ===
 def ask_metodo_pago(chat_id):
     _push_step(chat_id, "metodo")
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("🏦 Transferencia", "💵 Efectivo")
     kb.row(BTN_BACK, BTN_CANCEL)
-    bot.send_message(chat_id, "💳 ¿Cómo recibiste el dinero?", reply_markup=kb)
+    bot.send_message(chat_id, "💳 **¿Cómo recibiste el dinero?** (Entrada)", reply_markup=kb, parse_mode="Markdown")
     bot.register_next_step_handler_by_chat_id(chat_id, input_metodo_pago)
 
 def input_metodo_pago(message):
@@ -389,6 +417,7 @@ def input_metodo_pago(message):
     if message.text == "🏦 Transferencia":
         ask_comprobante_entrada(message.chat.id)
     else:
+        st["codigo_transaccion"] = next_tracking_code_monthly(message)
         st["input_image_id"] = None
         confirmar_datos(message.chat.id)
 
@@ -404,51 +433,66 @@ def recibir_comprobante_entrada(message):
         return ask_comprobante_entrada(message.chat.id)
     
     st = _ensure_state(message.chat.id)
+    st["codigo_transaccion"] = next_tracking_code_monthly(message) 
     
     try:
-        bot.send_chat_action(message.chat.id, 'upload_photo')
+        # Ya no subimos a Supabase. Guardamos el file_id temporal de Telegram.
         file_id = message.photo[-1].file_id if message.content_type == 'photo' else message.document.file_id
-        ext = "jpg" if message.content_type == 'photo' else "png"
-        file_info = bot.get_file(file_id)
-        file_content = bot.download_file(file_info.file_path)
+        st["temp_file_id"] = file_id
         
-        nombre_archivo = f"input_{st['codigo_transaccion']}_{int(datetime.utcnow().timestamp())}.{ext}"
-        supabase.storage.from_("comprobantes").upload(nombre_archivo, file_content, {"content-type": f"image/{ext}"})
-        url = supabase.storage.from_("comprobantes").get_public_url(nombre_archivo)
+        # Flujo de confirmación visual
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("✅ Confirmar Imagen", callback_data="img_in_ok"),
+               types.InlineKeyboardButton("❌ Subir otra", callback_data="img_in_no"))
         
-        st["input_image_id"] = url
-        confirmar_datos(message.chat.id)
+        bot.send_photo(message.chat.id, file_id, caption="👀 **¿Es correcta esta imagen del pago del cliente?**", reply_markup=kb, parse_mode="Markdown")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error subiendo foto: {e}")
+        bot.send_message(message.chat.id, f"❌ Error leyendo foto: {e}")
         return ask_comprobante_entrada(message.chat.id)
 
-# --- CORRECCIÓN V4.3: CAPTURAR ID DEL RESUMEN ---
+@bot.callback_query_handler(func=lambda c: c.data in ("img_in_ok", "img_in_no"))
+def on_img_in_confirm(cb):
+    chat_id = cb.message.chat.id
+    try: bot.delete_message(chat_id, cb.message.message_id)
+    except: pass
+
+    if cb.data == "img_in_no":
+        ask_comprobante_entrada(chat_id)
+    else:
+        st = _ensure_state(chat_id)
+        st["input_image_id"] = st.get("temp_file_id") # Asignamos el file_id final
+        confirmar_datos(chat_id)
+
 def confirmar_datos(chat_id):
     st = _ensure_state(chat_id)
+    
+    if "codigo_transaccion" not in st:
+        st["codigo_transaccion"] = f"TEMP-{int(time.time())}"
+
+    obs_text = f"\n📝 **Obs:** {st['observaciones']}" if st['observaciones'] else ""
+
     resumen = (
         f"🧾 **CONFIRMACIÓN DE ENVÍO**\n"
         f"🆔 **{st['codigo_transaccion']}**\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"💳 **Método:** {st['metodo_pago']}\n"
-        f"🌍 **Ruta:** {st['origen']} ➡️ {st['destino']}\n"
-        f"💸 **Monto a Enviar:** {_fmt_num(st['monto_envio'])} {PAIS_MONEDA.get(st['origen'])}\n"
-        f"💰 **Recibe:** {_fmt_num(st['monto_recibir'])} {PAIS_MONEDA.get(st['destino'])}\n"
+        f"📤 **Salida:** {st['tipo_operacion']}\n"
+        f"📥 **Entrada:** {st['metodo_pago']}\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"👤 **DATOS DEL RECEPTOR:**\n"
-        f"🏛️ Banco: {st['nombre_banco']}\n"
-        f"📝 Nombre: {st['nombre_receptor']}\n"
-        f"🆔 Doc: {st['documento_receptor']}\n"
-        f"🔢 Cta: {st['cuenta_receptor']}\n\n"
-        f"⚠️ _Por favor revisa los datos antes de confirmar._"
+        f"🌍 {st['origen']} ➡️ {st['destino']}\n"
+        f"💸 Envia: {_fmt_num(st['monto_envio'])} {PAIS_MONEDA.get(st['origen'])}\n"
+        f"💰 Recibe: {_fmt_num(st['monto_recibir'])} {PAIS_MONEDA.get(st['destino'])}\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"👤 **DATOS CLIENTE:**\n"
+        f"`{st['datos_cliente']}`"
+        f"{obs_text}\n\n"
+        f"⚠️ _Revisa antes de confirmar._"
     )
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("✅ Confirmar", callback_data="confirm_tx"), types.InlineKeyboardButton("❌ Cancelar", callback_data="cancel_tx"))
     
-    # 1. ENVIAMOS EL MENSAJE Y GUARDAMOS EL ID DEL RESUMEN
     msg = bot.send_message(chat_id, resumen, parse_mode="Markdown", reply_markup=kb)
     st["origin_msg_id"] = msg.message_id
 
-# --- CORRECCIÓN V4.4: NO SOBRESCRIBIR EL RESUMEN ---
 @bot.callback_query_handler(func=lambda c: c.data in ("confirm_tx", "cancel_tx"))
 def on_confirm(cb):
     chat_id = cb.message.chat.id
@@ -460,13 +504,8 @@ def on_confirm(cb):
     bot.answer_callback_query(cb.id, "Procesando...")
     try:
         finalizar_transaccion(chat_id)
-        
-        # 1. QUITAR BOTONES DEL RESUMEN (PERO DEJAR EL TEXTO INTACTO)
         bot.edit_message_reply_markup(chat_id, cb.message.message_id, reply_markup=None)
-        
-        # 2. ENVIAR NUEVO MENSAJE DE CONFIRMACIÓN (PARA NO BORRAR DATOS)
         bot.reply_to(cb.message, "✅ **Solicitud enviada a operadores.**", parse_mode="Markdown")
-        
     except Exception as e:
         bot.send_message(chat_id, f"❌ Error: {e}")
     finally:
@@ -481,32 +520,39 @@ def finalizar_transaccion(chat_id):
 
     bot.send_message(chat_id, f"🚀 **Orden Creada:** {data['codigo_transaccion']}", parse_mode="Markdown")
 
+    obs_line = f"\n📝 **Obs:** {data['observaciones']}" if data.get('observaciones') else ""
+
     msg_op = (
         f"🚀 **NUEVA SOLICITUD: {data['codigo_transaccion']}**\n"
         f"👨‍💻 Operador: {data['usuario']}\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"💳 **Método:** {data['metodo_pago']}\n"
+        f"📤 **TIPO:** {data['tipo_operacion']}\n"
         f"💸 **MONTO A ENVIAR:**\n"
         f"👉 **{_fmt_num(data['monto_recibir'])} {PAIS_MONEDA.get(data['destino'])}**\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🏦 **DATOS BANCARIOS:**\n"
-        f"🏛️ Banco: {data['nombre_banco']}\n"
-        f"👤 Nombre: {data['nombre_receptor']}\n"
-        f"🆔 Doc: `{data['documento_receptor']}`\n"
-        f"🔢 Cta: `{data['cuenta_receptor']}`"
+        f"📋 **DATOS:**\n"
+        f"`{data['datos_cliente']}`"
+        f"{obs_line}"
     )
-    
-    if data.get('input_image_id'):
-        msg_op += f"\n\n📎 [Ver Comprobante Entrada]({data['input_image_id']})"
 
     markup = types.InlineKeyboardMarkup()
     if tx_id:
         markup.add(types.InlineKeyboardButton("📸 Adjuntar Foto", callback_data=f"ok_{tx_id}"),
                    types.InlineKeyboardButton("⚠️ Reportar", callback_data=f"fail_{tx_id}"))
     
-    op_msg = safe_send_message(CHAT_ID_OPERADORES, msg_op, reply_markup=markup, parse_mode="Markdown")
-    if op_msg and tx_id: supabase.table("transacciones").update({"group_message_id": op_msg.message_id}).eq("id", tx_id).execute()
+    try:
+        # Enviar al grupo de operadores. Si hay foto (file_id), se envía junto con el texto.
+        if data.get('input_image_id'):
+            op_msg = bot.send_photo(CHAT_ID_OPERADORES, data['input_image_id'], caption=msg_op, reply_markup=markup, parse_mode="Markdown")
+        else:
+            op_msg = bot.send_message(CHAT_ID_OPERADORES, msg_op, reply_markup=markup, parse_mode="Markdown")
+            
+        if op_msg and tx_id: 
+            supabase.table("transacciones").update({"group_message_id": op_msg.message_id}).eq("id", tx_id).execute()
+    except Exception as e:
+        print(f"Error mandando a operadores: {e}")
 
+    # Calcular Ganancias
     t_f = obtener_tasa_full(data['origen'], data['destino'])
     if t_f and data['tasa'] < t_f:
         g = round((data['monto_envio'] * (t_f - data['tasa'])) / t_f, 2)
@@ -517,9 +563,6 @@ def finalizar_transaccion(chat_id):
     
     safe_send_message(CHAT_ID_GANANCIAS, obtener_resumen_saldos(), parse_mode="Markdown")
 
-# ==========================================
-# 6. DASHBOARD, OPERACIONES Y PAUSAS
-# ==========================================
 def update_dashboard(chat_id):
     global DASHBOARD_MSG_ID
     try:
@@ -559,23 +602,12 @@ def callback_ops(call):
     if action == "ok":
         operator_uploads[call.from_user.id] = tx_id
         cod_v = tx_id
-        
-        origin_msg_id = None
         try:
-            r = supabase.table("transacciones").select("codigo_transaccion, origin_msg_id").eq("id", tx_id).execute()
-            if r.data: 
-                cod_v = r.data[0]['codigo_transaccion']
-                origin_msg_id = r.data[0]['origin_msg_id']
+            r = supabase.table("transacciones").select("codigo_transaccion").eq("id", tx_id).execute()
+            if r.data: cod_v = r.data[0]['codigo_transaccion']
         except: pass
         
         text_resp = f"@{user} 📸 Envía la foto para **{cod_v}**"
-        
-        # Link formato privado: t.me/c/ID_SIN_100/ID_MENSAJE
-        if origin_msg_id:
-            clean_matriz_id = str(CHAT_ID_MATRIZ).replace("-100", "")
-            link = f"https://t.me/c/{clean_matriz_id}/{origin_msg_id}"
-            text_resp += f"\n🔗 [Ver Datos en Grupo VIP]({link})"
-            
         bot.send_message(call.message.chat.id, text_resp + ":", reply_markup=types.ForceReply(), parse_mode="Markdown")
         bot.answer_callback_query(call.id, "Esperando foto...")
 
@@ -627,15 +659,13 @@ def actualizar_mensaje_pausa(message_obj, tx_id, reason, user, msg_id_to_edit):
         try:
             monto = _fmt_num(tx_data['monto_recibir'])
             moneda = PAIS_MONEDA.get(tx_data['destino'], "$")
+            datos_cliente = tx_data.get('datos_cliente', 'Sin datos')
             text += (
                 f"\n➖➖➖➖➖➖➖➖➖➖\n"
                 f"💸 **MONTO:** {monto} {moneda}\n"
                 f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"🏦 **DATOS:**\n"
-                f"🏛️ {tx_data['nombre_banco']}\n"
-                f"👤 {tx_data['nombre_receptor']}\n"
-                f"🆔 `{tx_data['documento_receptor']}`\n"
-                f"🔢 `{tx_data['cuenta_receptor']}`"
+                f"📋 **DATOS:**\n"
+                f"`{datos_cliente}`"
             )
         except: pass
 
@@ -647,37 +677,17 @@ def actualizar_mensaje_pausa(message_obj, tx_id, reason, user, msg_id_to_edit):
     try:
         bot.edit_message_text(text, message_obj.chat.id, msg_id_to_edit, parse_mode="Markdown", reply_markup=kb)
     except Exception as e: print(f"Error edit msg: {e}")
-    
     update_dashboard(message_obj.chat.id)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("anular_"))
 def callback_anular(call):
     _, tx_id = call.data.split("_")
     user = call.from_user.first_name
-    
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
     except: pass
-    
     supabase.table("transacciones").update({"status": "CANCELADA", "operator_username": user, "updated_at": now_utc_minus4_iso()}).eq("id", tx_id).execute()
     update_dashboard(call.message.chat.id)
     bot.answer_callback_query(call.id, "Anulada")
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("clean_"))
-def callback_limpieza_vip(call):
-    try:
-        _, origin_msg_id = call.data.split("_")
-        
-        # 1. Borrar la foto de confirmación (el mensaje con el botón)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        
-        # 2. Borrar el Resumen Original (si existe y el ID es válido)
-        if origin_msg_id and origin_msg_id != 'None':
-            try: bot.delete_message(call.message.chat.id, int(origin_msg_id))
-            except: pass
-            
-        bot.answer_callback_query(call.id, "Datos borrados ✅")
-    except Exception as e:
-        print(f"Error borrando VIP: {e}")
 
 @bot.message_handler(content_types=['photo', 'document'])
 def recibir_foto(message):
@@ -692,58 +702,114 @@ def recibir_foto(message):
         tx_id = operator_uploads.pop(message.from_user.id)
         
         file_id = message.photo[-1].file_id if message.content_type == 'photo' else message.document.file_id
-        ext = "jpg" if message.content_type == 'photo' else "png"
-        file_info = bot.get_file(file_id)
-        file_content = bot.download_file(file_info.file_path)
         
-        nombre_archivo = f"tx_{tx_id}_{int(datetime.utcnow().timestamp())}.{ext}"
-        supabase.storage.from_("comprobantes").upload(nombre_archivo, file_content, {"content-type": f"image/{ext}"})
-        url_publica = supabase.storage.from_("comprobantes").get_public_url(nombre_archivo)
+        # Guarda estado temporal para esperar confirmación del operador
+        operator_confirmations[message.from_user.id] = {
+            'tx_id': tx_id,
+            'file_id': file_id,
+            'msg_id': message.message_id,
+            'reply_to_id': message.reply_to_message.message_id if message.reply_to_message else None
+        }
 
-        r = supabase.table("transacciones").update({"status": "REALIZADA", "proof_image_id": url_publica, "operator_username": message.from_user.first_name, "updated_at": now_utc_minus4_iso()}).eq("id", tx_id).execute()
-        
-        if r.data:
-            tx_data = r.data[0]
-            group_msg_id = tx_data.get('group_message_id')
-            origin_msg_id = tx_data.get('origin_msg_id') 
-            cod_v = tx_data.get('codigo_transaccion', f"#{tx_id}")
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("✅ Confirmar y Finalizar", callback_data="img_out_ok"),
+               types.InlineKeyboardButton("❌ Subir otra", callback_data="img_out_no"))
 
-            try:
-                # ENVIAR AL GRUPO VIP (MATRIZ) CON BOTÓN DE BORRAR
-                caption = f"✅ **OPERACIÓN {cod_v} COMPLETADA**\n👨‍💻 Operador: {message.from_user.first_name}"
-                
-                kb_clean = types.InlineKeyboardMarkup()
-                kb_clean.add(types.InlineKeyboardButton("🗑️ Entregado / Borrar Datos", callback_data=f"clean_{origin_msg_id}"))
+        bot.send_photo(message.chat.id, file_id, caption="👀 **¿Es correcto este comprobante de salida?**", reply_markup=kb, parse_mode="Markdown", reply_to_message_id=message.message_id)
 
-                # Usamos send_photo siempre (incluso si hay ID original)
-                # Esto asegura que el mensaje llegue, y el botón sepa qué borrar.
-                # Si origin_msg_id existe, borraremos ESE mensaje.
-                if origin_msg_id:
-                    # Intento responder al resumen original para mantener contexto visual
-                    try:
-                        bot.send_photo(CHAT_ID_MATRIZ, url_publica, caption=caption, parse_mode="Markdown", reply_to_message_id=origin_msg_id, reply_markup=kb_clean)
-                    except:
-                        # Si falla (ej: mensaje original muy viejo), enviar normal
-                        bot.send_photo(CHAT_ID_MATRIZ, url_publica, caption=caption, parse_mode="Markdown", reply_markup=kb_clean)
-                else:
-                    bot.send_photo(CHAT_ID_MATRIZ, url_publica, caption=caption, parse_mode="Markdown", reply_markup=kb_clean)
-            except Exception as e: print(f"Err reply VIP: {e}")
-
-            if group_msg_id:
-                try: bot.delete_message(CHAT_ID_OPERADORES, group_msg_id)
-                except: pass
-            
-            try: bot.delete_message(CHAT_ID_OPERADORES, message.message_id)
-            except: pass
-            
-            try: bot.delete_message(CHAT_ID_OPERADORES, message.reply_to_message.message_id)
-            except: pass
-
-            update_dashboard(message.chat.id)
     except Exception as e:
         print(f"❌ Error Foto: {traceback.format_exc()}")
         bot.reply_to(message, "❌ Error procesando imagen.")
         if 'tx_id' in locals(): operator_uploads[message.from_user.id] = tx_id
+
+@bot.callback_query_handler(func=lambda c: c.data in ("img_out_ok", "img_out_no"))
+def on_img_out_confirm(cb):
+    user_id = cb.from_user.id
+    chat_id = cb.message.chat.id
+
+    if user_id not in operator_confirmations:
+        bot.answer_callback_query(cb.id, "⚠️ Sesión expirada. Vuelve a adjuntar.")
+        try: bot.delete_message(chat_id, cb.message.message_id)
+        except: pass
+        return
+
+    conf = operator_confirmations.pop(user_id)
+    tx_id = conf['tx_id']
+    file_id = conf['file_id']
+
+    try: bot.delete_message(chat_id, cb.message.message_id) # Borra el mensaje de pregunta
+    except: pass
+
+    if cb.data == "img_out_no":
+        operator_uploads[user_id] = tx_id # Devuelve el permiso para subir foto
+        bot.send_message(chat_id, "❌ Subida cancelada. Vuelve a enviar la foto correcta.")
+        return
+
+    # Si fue OK, ejecuta la finalización
+    bot.answer_callback_query(cb.id, "Finalizando operación...")
+    finalizar_operador_db(chat_id, user_id, cb.from_user.first_name, tx_id, file_id, conf['msg_id'], conf['reply_to_id'])
+
+def finalizar_operador_db(chat_id, user_id, operator_name, tx_id, file_id, msg_to_del_1, msg_to_del_2):
+    try:
+        # 1. Actualizar DB
+        r = supabase.table("transacciones").update({
+            "status": "REALIZADA",
+            "proof_image_id": file_id, # Guardamos el ID de Telegram directo
+            "operator_username": operator_name,
+            "updated_at": now_utc_minus4_iso()
+        }).eq("id", tx_id).execute()
+
+        if r.data:
+            tx_data = r.data[0]
+            group_msg_id = tx_data.get('group_message_id')
+            cod_v = tx_data.get('codigo_transaccion', f"#{tx_id}")
+            in_img = tx_data.get('input_image_id')
+
+            # 2. Borrar mensajes del grupo de operadores
+            if group_msg_id:
+                try: bot.delete_message(chat_id, group_msg_id)
+                except: pass
+            try: bot.delete_message(chat_id, msg_to_del_1)
+            except: pass
+            if msg_to_del_2:
+                try: bot.delete_message(chat_id, msg_to_del_2)
+                except: pass
+
+            # 3. Mandar paquete completo a Contabilidad / Logs
+            if CHAT_ID_LOGS != 0:
+                try:
+                    msg_log = (
+                        f"📑 **REGISTRO DE OPERACIÓN** | {cod_v}\n"
+                        f"➖➖➖➖➖➖➖➖➖➖\n"
+                        f"📥 **Entrada:** {tx_data.get('metodo_pago', 'N/A')}\n"
+                        f"📤 **Salida:** {tx_data.get('tipo_operacion', 'N/A')}\n"
+                        f"💸 Recibimos: {_fmt_num(tx_data.get('monto_envio'))} {PAIS_MONEDA.get(tx_data.get('origen'), '$')}\n"
+                        f"💸 Enviamos: {_fmt_num(tx_data.get('monto_recibir'))} {PAIS_MONEDA.get(tx_data.get('destino'), '$')}\n"
+                        f"➖➖➖➖➖➖➖➖➖➖\n"
+                        f"📋 **DATOS BANCARIOS:**\n"
+                        f"`{tx_data.get('datos_cliente', '')}`\n"
+                        f"📝 **Obs:** {tx_data.get('observaciones', 'Ninguna')}\n"
+                        f"👤 Operador: {operator_name}"
+                    )
+                    
+                    # Mandamos el texto primero
+                    bot.send_message(CHAT_ID_LOGS, msg_log, parse_mode="Markdown")
+                    
+                    # Mandamos comprobante de entrada (Si existía foto)
+                    if in_img:
+                        bot.send_photo(CHAT_ID_LOGS, in_img, caption=f"📥 Comprobante Entrada Cliente ({cod_v})")
+                    
+                    # Mandamos comprobante de salida (Foto operador)
+                    bot.send_photo(CHAT_ID_LOGS, file_id, caption=f"📤 Comprobante Salida Operador ({cod_v})")
+
+                except Exception as e: print(f"Error enviando a logs: {e}")
+
+            # 4. Actualizar tablero de pendientes
+            update_dashboard(chat_id)
+
+    except Exception as e:
+        print(f"Error en finalizar_operador_db: {e}")
+        bot.send_message(chat_id, f"❌ Hubo un error al finalizar: {e}")
 
 # ==========================================
 # 7. OTROS COMANDOS
@@ -785,6 +851,6 @@ def fallback(m):
     print(f"📢 ID DEL GRUPO: {m.chat.id}")  
     if es_chat_autorizado(m): bot.reply_to(m, "❓ Usa /start")
 
-print(f"🤖 SISTEMA V.I.P 4.4 ONLINE (FINAL PRESERVATION)")
+print(f"🤖 SISTEMA V.I.P 5.4 ONLINE (ARCHIVO CENTRAL - SIN STORAGE)")
 print(f"🔐 Bloqueado para grupo: {CHAT_ID_MATRIZ}")
 bot.infinity_polling()
