@@ -144,16 +144,10 @@ def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 def _norm_pair(p: str) -> str:
-    """
-    Normaliza pares a: 'origen - destino' en minúsculas, sin acentos,
-    y con sinónimos: zelle->usa, euros->europa, panama->panamá, peru->perú, mexico->méxico, argentin->argentina.
-    También acepta 'origen destino' o 'origen- destino' etc.
-    """
     if not p:
         return ""
     s = p.strip().lower()
     s = s.replace("/", " ").replace("  ", " ")
-    # uniformar separador
     if " - " in s:
         partes = s.split(" - ")
     else:
@@ -161,7 +155,6 @@ def _norm_pair(p: str) -> str:
     if len(partes) == 2:
         a, b = partes[0].strip(), partes[1].strip()
     else:
-        # también soporta "origen destino" sin guion
         toks = s.split()
         if len(toks) >= 2:
             a, b = " ".join(toks[:-1]), toks[-1]
@@ -179,7 +172,6 @@ def _norm_pair(p: str) -> str:
         return w
 
     a, b = std(a), std(b)
-    # quitar acentos para la clave del mapa
     a_key = _strip_accents(a)
     b_key = _strip_accents(b)
     return f"{a_key} - {b_key}".strip()
@@ -221,15 +213,10 @@ DECIMALS_BY_PAIR = {
     "uruguay - venezuela": 3,
     "chile - panama": 5,
     "chile - ecuador": 5,
-    # especial sin guion:
     "colombia usdt": 2,
 }
 
 def _truncate_value(val, decs):
-    """
-    Trunca sin redondeo a 'decs' decimales usando Decimal + ROUND_DOWN.
-    Devuelve float (y lo formateamos como string con f-string para mantener decs).
-    """
     if val is None:
         return None
     if decs is None:
@@ -239,10 +226,6 @@ def _truncate_value(val, decs):
     return float(d)
 
 def _fmt_trunc(val, decs):
-    """
-    Devuelve string del valor truncado con exactamente 'decs' decimales.
-    Si val es None -> 'No disponible'
-    """
     if val is None:
         return "No disponible"
     if decs is None:
@@ -263,17 +246,15 @@ emojis_paises = {
     "panamá": "🇵🇦",
     "ecuador": "🇪🇨",
     "chile": "🇨🇱",
-    "uruguay": "🇺🇾",   # NUEVO
+    "uruguay": "🇺🇾",
 }
 
 # === 8) BOTONES / MENÚ ===
-SPECIAL_COPUSDT_BTN = "💱 COP USDT"  # NUEVO botón especial
+SPECIAL_COPUSDT_BTN = "💱 COP USDT"
 
 def generar_menu():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Botón COP USDT como fila propia arriba
     markup.row(telebot.types.KeyboardButton(SPECIAL_COPUSDT_BTN))
-    # Países en filas de a 2
     botones = [telebot.types.KeyboardButton(f"{emoji} {pais.title()}") for pais, emoji in emojis_paises.items()]
     for i in range(0, len(botones), 2):
         markup.row(*botones[i:i+2])
@@ -298,7 +279,6 @@ def obtener_pares_disponibles(nombre_pais):
             par = t["nombre_tasa"].replace("Tasa full ", "")
             pares.add(par)
 
-    # Si es Colombia y existe COP USDT hoy, añadirlo también
     if pais_l == "colombia":
         for t in data:
             nt = (t.get("nombre_tasa") or "").lower()
@@ -322,8 +302,7 @@ def _buscar_valor_hoy(data, nombre_tasa_lower, hoy_iso):
 
 def _card_cop_usdt_full_may(pair_key_norm, full_act, full_prom, may_act, may_prom, hora):
     line = "─" * 28
-    # aplicar truncados:
-    decs = DECIMALS_BY_PAIR.get(pair_key_norm)  # 'colombia usdt'
+    decs = DECIMALS_BY_PAIR.get(pair_key_norm)
     f_act  = _fmt_trunc(full_act, decs)
     f_prom = _fmt_trunc(full_prom, decs) if full_prom is not None else "No disponible"
     m_act  = _fmt_trunc(may_act, decs)
@@ -360,9 +339,6 @@ def _card_cop_usdt_may_only(pair_key_norm, may_act, may_prom, hora):
     )
 
 def _apply_fmt_pair_lines(pair_key_norm, lines: list[tuple[str, float | None]]):
-    """
-    Recibe una lista de (label, value) y devuelve líneas con valores truncados por par.
-    """
     decs = DECIMALS_BY_PAIR.get(pair_key_norm)
     out = []
     for label, val in lines:
@@ -379,9 +355,7 @@ def obtener_tasas_par(nombre_par, user_id):
         data = resp.data or []
         hoy = ahora.date().isoformat()
 
-        # --- Par único COP USDT con “recuadro” ---
         norm = nombre_par.strip().lower().replace("/", " ").replace("  ", " ")
-        # clave normalizada para decimales
         pair_key_norm = _norm_pair(nombre_par if norm != "cop usdt" else "colombia usdt")
 
         if norm == "cop usdt":
@@ -393,9 +367,7 @@ def obtener_tasas_par(nombre_par, user_id):
             if full_act is None and may_act is None:
                 return "❌ No hay datos disponibles para COP USDT."
 
-            # súper restricción (solo Público) -> no aplica público aquí
             if user_id in USUARIOS_SOLO_PUBLICO:
-                decs = DECIMALS_BY_PAIR.get(pair_key_norm)
                 return (
                     "┌────────────────────────────┐\n"
                     "│   💱  COP → USDT (P2P)     │\n"
@@ -407,27 +379,31 @@ def obtener_tasas_par(nombre_par, user_id):
                     "└────────────────────────────┘"
                 )
 
-            # limitados/restringidos -> solo mayorista
             if (user_id in USUARIOS_LIMITADOS) or (user_id in USUARIOS_RESTRINGIDOS):
                 if may_act is None:
                     return "❌ No hay datos disponibles para COP USDT."
                 return _card_cop_usdt_may_only(pair_key_norm, may_act, may_prom, hora or "--:--")
 
-            # sin restricción -> full + mayorista
             if full_act is None or may_act is None:
                 return "❌ No hay datos suficientes disponibles para COP USDT."
             return _card_cop_usdt_full_may(pair_key_norm, full_act, full_prom, may_act, may_prom, hora or "--:--")
 
         # --- Flujo normal de pares con " - " ---
         def buscar(n): return _buscar_valor_hoy(data, n.lower(), hoy)
+        
         tasa_full_actual, hora_actual = buscar(f"Tasa full {nombre_par}")
         tasa_full_prom, _             = buscar(f"Tasa full promedio {nombre_par}")
-        tasa_pub_actual, _            = buscar(f"Tasa público {nombre_par}")
-        tasa_pub_prom, _              = buscar(f"Tasa público promedio {nombre_par}")
+        
         tasa_may_actual, _            = buscar(f"Tasa mayorista {nombre_par}")
         tasa_may_prom, _              = buscar(f"Tasa mayorista promedio {nombre_par}")
+        
+        # ---> NUEVO: Búsqueda de Tasa Promocional <---
+        tasa_promo_actual, _          = buscar(f"Tasa promocional {nombre_par}")
+        tasa_promo_prom, _            = buscar(f"Tasa promocional promedio {nombre_par}")
+        
+        tasa_pub_actual, _            = buscar(f"Tasa público {nombre_par}")
+        tasa_pub_prom, _              = buscar(f"Tasa público promedio {nombre_par}")
 
-        # clave normalizada para decimales (ej: "chile - venezuela")
         pair_key_norm = _norm_pair(nombre_par)
 
         if user_id in USUARIOS_SOLO_PUBLICO:
@@ -449,6 +425,8 @@ def obtener_tasas_par(nombre_par, user_id):
             cuerpo = _apply_fmt_pair_lines(pair_key_norm, [
                 ("Tasa Mayorista Actual", tasa_may_actual),
                 ("Tasa Mayorista Promedio", tasa_may_prom),
+                ("Tasa Promocional Actual", tasa_promo_actual), # <-- NUEVO
+                ("Tasa Promocional Promedio", tasa_promo_prom), # <-- NUEVO
                 ("Tasa Público Actual", tasa_pub_actual),
                 ("Tasa Público Promedio", tasa_pub_prom),
             ])
@@ -466,6 +444,8 @@ def obtener_tasas_par(nombre_par, user_id):
             ("Tasa Full Promedio", tasa_full_prom),
             ("Tasa Mayorista Actual", tasa_may_actual),
             ("Tasa Mayorista Promedio", tasa_may_prom),
+            ("Tasa Promocional Actual", tasa_promo_actual), # <-- NUEVO
+            ("Tasa Promocional Promedio", tasa_promo_prom), # <-- NUEVO
             ("Tasa Público Actual", tasa_pub_actual),
             ("Tasa Público Promedio", tasa_pub_prom),
         ])
@@ -524,7 +504,6 @@ def manejar_mensaje(message):
         return
     texto_l = texto.lower()
 
-    # Botón especial COP USDT
     if texto == SPECIAL_COPUSDT_BTN or texto_l.replace("/", " ").replace("  ", " ") == "cop usdt":
         mensaje = obtener_tasas_par("COP USDT", message.from_user.id)
         bot.send_message(message.chat.id, mensaje)
@@ -535,7 +514,6 @@ def manejar_mensaje(message):
         bot.send_message(message.chat.id, mensaje)
         return
 
-    # Búsqueda por país desde el menú
     for pais in emojis_paises:
         if pais in texto_l:
             pares = obtener_pares_disponibles(pais)
